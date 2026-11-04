@@ -230,7 +230,7 @@ Open the `.tif` in QGIS. The value of a cell is the number of alerts in the peri
 [notebook/firms.ipynb](notebook/firms.ipynb) reads the outputs of steps 1 and 2 and makes four sets of maps of the AOI:
 
 1. Provinces on a shaded relief basemap.
-2. FIRMS alerts by instrument, with the forest of 2020 ([JRC Global Forest Cover 2020](https://forobs.jrc.ec.europa.eu/GFC)) and cities above 1 million people ([Natural Earth](https://www.naturalearthdata.com/)).
+2. FIRMS alerts by instrument, with the forest of 2020 ([JRC Global Forest Cover 2020](https://forobs.jrc.ec.europa.eu/GFC)) and cities above 100,000 people ([Natural Earth](https://www.naturalearthdata.com/)).
 3. The fire count grid of step 2, with a log colour scale.
 4. Fire alerts per regency or city (kabupaten and kota, GADM level 2), in total and per 100 km².
 
