@@ -1,0 +1,30 @@
+# The code folders are mounted, so changes to the code need no rebuild
+x-app: &app
+  build: .
+  image: forest-fire-mapping-tutorial
+  env_file:
+    - .env
+  volumes:
+    - ./src:/usr/src/app/src
+    - ./job:/usr/src/app/job
+    - ./notebook:/usr/src/app/notebook
+    - ./output:/usr/src/app/output
+
+services:
+  # Step 1, docker compose run --rm firms
+  firms:
+    <<: *app
+    command: [ "python", "-m", "job.firms" ]
+  # Step 2, docker compose run --rm firms_grid
+  firms_grid:
+    <<: *app
+    command: [ "python", "-m", "job.firms_grid" ]
+  # Step 3, docker compose up notebook, then open http://localhost:8888/lab?token=forest-fire
+  notebook:
+    <<: *app
+    command:
+      [ "jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser", "--allow-root",
+        "--IdentityProvider.token=forest-fire", "--ServerApp.root_dir=/usr/src/app" ]
+    ports:
+      # Only on this computer, not on the network
+      - "127.0.0.1:8888:8888"

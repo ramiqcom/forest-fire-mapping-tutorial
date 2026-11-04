@@ -1,0 +1,10 @@
+.git
+.venv
+.vscode
+.env
+**/__pycache__
+**/.ipynb_checkpoints
+.ruff_cache
+src/*.egg-info
+docs
+output

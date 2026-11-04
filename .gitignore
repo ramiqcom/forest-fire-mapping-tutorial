@@ -1,0 +1,10 @@
+.venv
+.env
+__pycache__
+*.egg-info
+.ipynb_checkpoints
+.ruff_cache
+
+# Outputs are made by the jobs and the notebook
+output/*
+!output/.gitkeep
