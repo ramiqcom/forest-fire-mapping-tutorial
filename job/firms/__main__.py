@@ -32,7 +32,7 @@ def main():
     FIRMS_DIR.mkdir(parents=True, exist_ok=True)
     logger.info(
         f"FIRMS {', '.join(FIRMS_SOURCES)} from {START_DATE} to {END_DATE}, "
-        f"{len(provinces)} provinces of {COUNTRY}: {', '.join(provinces['name'])}"
+        f"provinces of {COUNTRY} ({len(provinces)}): {', '.join(provinces['name'])}"
     )
 
     failed = []

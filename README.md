@@ -6,7 +6,7 @@ This tutorial turns NASA FIRMS satellite fire alerts into forest fire maps, in t
 2. **Make the FIRMS grid**: count the alerts per cell of about 1 km, with the sea and water masked.
 3. **Run the notebook**: make the maps of alerts, forest, fire count and alerts per district.
 
-You choose the area of interest (AOI) as input: a list of provinces from [GADM](https://gadm.org/), the only boundary source of the tutorial. The default example covers August to October 2026 in Indonesia: the 5 provinces of Kalimantan and the 8 provinces of mainland Sumatera (Kepulauan Riau and Bangka Belitung left out). You can change the provinces and the period, see [Choose your area and period](#choose-your-area-and-period).
+You choose the area of interest (AOI) as input: a list of provinces from [GADM](https://gadm.org/), the only boundary source of the tutorial. The example covers August to October 2026 in one province of Indonesia, Kalimantan Tengah (Central Kalimantan), so it runs in minutes. You can change the provinces and the period, see [Choose your area and period](#choose-your-area-and-period).
 
 Everything runs and stays on your computer: every step writes to the local `output/` folder and nothing is uploaded to a cloud bucket. The internet is only used to read the public input data.
 
@@ -106,23 +106,13 @@ The other settings in `.env` are your inputs. The values of `.env.example` run t
 | Setting | Example | Meaning |
 |---|---|---|
 | `COUNTRY` | `IDN` | Country of the provinces, the 3 letter ISO code that GADM uses |
-| `PROVINCES` | `Kalimantan Barat, ..., Lampung` | GADM province names, comma separated. Empty for the whole country. See [Choose your area and period](#choose-your-area-and-period) |
-| `AOI_NAME` | `kalimantan_sumatera` | Name of the AOI in the grid and figure file names, lower case without spaces |
-| `AOI_TITLE` | `Kalimantan and Sumatera` | Title of the AOI on the maps |
+| `PROVINCES` | `Kalimantan Tengah` | GADM province names, comma separated. Empty for the whole country. See [Choose your area and period](#choose-your-area-and-period) |
+| `AOI_NAME` | `kalimantan_tengah` | Name of the AOI in the grid and figure file names, lower case without spaces |
+| `AOI_TITLE` | `Kalimantan Tengah` | Title of the AOI on the maps |
 | `START_DATE`, `END_DATE` | `2026-08-01`, `2026-10-31` | Period of the alerts, both days included. The file names have both dates, `2026-08-01_2026-10-31` |
 | `FIRMS_SOURCES` | the 4 near real time sources | Optional, satellites and processing level, see [Step 1](#step-1-get-the-firms-data) |
 
-**Tip for a first run:** try a small test before the full example, so you see every step work in a few minutes:
-
-```sh
-PROVINCES="Kalimantan Tengah"
-AOI_NAME="test_kalteng"
-AOI_TITLE="Kalimantan Tengah"
-START_DATE="2026-10-01"
-END_DATE="2026-10-10"
-```
-
-Put the example values back before the full run. The outputs of the test have other names, so they do not get in the way.
+Keep the example values for your first run: steps 1 and 2 of the example took about a minute and a half in our test. Change them afterwards to map your own area.
 
 ### 0.4 Build the Docker image ###
 
@@ -185,10 +175,10 @@ docker compose run --rm firms
 The log lists the provinces, every request, then a line per province:
 
 ```
-2026-11-04 10:26:04 - job.firms - kalimantan_tengah_2026-10-01_2026-10-10: 80,183 alerts saved to output/firms/kalimantan_tengah_2026-10-01_2026-10-10.fgb
+2026-11-04 10:38:23 - job.firms - kalimantan_tengah_2026-08-01_2026-10-31: 536,563 alerts saved to output/firms/kalimantan_tengah_2026-08-01_2026-10-31.fgb
 ```
 
-The full example (13 provinces, 3 months, 4 sources) sends about 900 requests and takes from tens of minutes to a few hours, depending on the FIRMS server and how often the limit is hit. Warnings like `No CSV for ... retrying in 60 s` are normal for large areas. If the job ends with `Failed: ...`, run the same command again: finished provinces are skipped.
+The example (1 province, 3 months, 4 sources) sends about 70 requests and took about 1 minute in our test (4 November 2026). Every province adds about 70 requests for 3 months, so a large AOI can take from tens of minutes to a few hours, depending on the FIRMS server and how often the limit is hit. Warnings like `No CSV for ... retrying in 60 s` are normal for large areas. If the job ends with `Failed: ...`, run the same command again: finished provinces are skipped.
 
 ### Check the result ###
 
@@ -219,7 +209,7 @@ For the whole AOI, [job/firms_grid](job/firms_grid/__main__.py) runs the GDAL co
 3. Reads [ESA WorldCover](https://esa-worldcover.org/) 2021 for the AOI from its public bucket, on the same grid, with the most common class per cell. Only the overview close to 1 km is downloaded, not the 10 m pixels.
 4. `gdal vector rasterize`: the AOI provinces as 1 on the same grid. A cell is inside when its centre is inside, so coastal cells that are mostly sea are left out.
 5. `gdal raster calc`: keeps the count where the cell is inside the AOI and is not WorldCover permanent water (class 80), nodata (65535) elsewhere.
-6. `gdal raster convert`: writes a Cloud Optimised GeoTIFF with ZSTD compression, statistics and overviews to `output/firms_grid/<AOI_NAME>_<period>.tif`, for example `output/firms_grid/kalimantan_sumatera_2026-08-01_2026-10-31.tif`.
+6. `gdal raster convert`: writes a Cloud Optimised GeoTIFF with ZSTD compression, statistics and overviews to `output/firms_grid/<AOI_NAME>_<period>.tif`, for example `output/firms_grid/kalimantan_tengah_2026-08-01_2026-10-31.tif`.
 
 ### Run it ###
 
@@ -229,7 +219,7 @@ After step 1 finished for every province of the AOI:
 docker compose run --rm firms_grid
 ```
 
-It takes a few minutes. Intermediate files are in `output/firms_grid/<AOI_NAME>_<period>_work/` while it runs and are removed at the end.
+It took about 20 seconds for the example in our test. Intermediate files are in `output/firms_grid/<AOI_NAME>_<period>_work/` while it runs and are removed at the end.
 
 ### Check the result ###
 

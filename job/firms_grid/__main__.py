@@ -103,7 +103,7 @@ def run(name: str, output_path):
     roi_path = folder / "roi.fgb"
     provinces.to_file(roi_path, driver="FlatGeobuf")
 
-    logger.info(f"Merge the fire alerts of {len(firms_paths)} provinces")
+    logger.info(f"Merge the fire alerts of the provinces ({len(firms_paths)})")
     merged_path = folder / "firms_merged.fgb"
     gdal(
         "vector", "concat",

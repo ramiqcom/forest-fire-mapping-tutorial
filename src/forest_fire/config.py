@@ -15,15 +15,11 @@ FIRMS_MAP_KEY = getenv("FIRMS_MAP_KEY")
 # COUNTRY is the ISO 3166 alpha-3 code that GADM uses, IDN for Indonesia
 COUNTRY = getenv("COUNTRY", "IDN").strip().upper()
 # GADM province names, comma separated, written with or without spaces. Empty for the whole country.
-# The default is Kalimantan and mainland Sumatera
-DEFAULT_PROVINCES = (
-    "Kalimantan Barat, Kalimantan Selatan, Kalimantan Tengah, Kalimantan Timur, Kalimantan Utara, "
-    "Aceh, Sumatera Utara, Sumatera Barat, Riau, Jambi, Sumatera Selatan, Bengkulu, Lampung"
-)
-PROVINCES = [p.strip() for p in getenv("PROVINCES", DEFAULT_PROVINCES).split(",") if p.strip()]
+# The default example is one province, Kalimantan Tengah
+PROVINCES = [p.strip() for p in getenv("PROVINCES", "Kalimantan Tengah").split(",") if p.strip()]
 # Name of the AOI in the file names of the grid and figures, and its title on the maps
-AOI_NAME = getenv("AOI_NAME", "kalimantan_sumatera")
-AOI_TITLE = getenv("AOI_TITLE", "Kalimantan and Sumatera")
+AOI_NAME = getenv("AOI_NAME", "kalimantan_tengah")
+AOI_TITLE = getenv("AOI_TITLE", "Kalimantan Tengah")
 
 # Period of the fire alerts, both dates included
 START_DATE = getenv("START_DATE", "2026-08-01")
