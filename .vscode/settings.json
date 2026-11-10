@@ -1,5 +1,8 @@
 {
-  "python.analysis.extraPaths": ["${workspaceFolder}/src"],
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/src"
+  ],
   "python.envFile": "${workspaceFolder}/.env",
-  "jupyter.notebookFileRoot": "${workspaceFolder}"
+  "jupyter.notebookFileRoot": "${workspaceFolder}",
+  "python.terminal.useEnvFile": true
 }
