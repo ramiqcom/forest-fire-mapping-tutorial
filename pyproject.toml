@@ -22,6 +22,8 @@ notebook = [
     "jupyterlab",
     "matplotlib",
     "rasterio",
+    # Distance to the fire alerts for the fire risk index
+    "scipy",
 ]
 dev = ["ruff"]
 

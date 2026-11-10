@@ -268,7 +268,7 @@ Open the `.tif` in QGIS. It has 7 bands, named in the file:
 
 ## Step 3: run the notebook ##
 
-[notebook/firms.ipynb](notebook/firms.ipynb) reads the outputs of steps 1, 2 and 2b and makes five sets of figures of the AOI:
+[notebook/firms.ipynb](notebook/firms.ipynb) reads the outputs of steps 1, 2 and 2b and makes six sets of figures of the AOI:
 
 1. Provinces on a shaded relief basemap.
 2. FIRMS alerts by instrument, with the Forest Typology 2020 classes of step 2b and cities above 100,000 people ([Natural Earth](https://www.naturalearthdata.com/)).
@@ -289,7 +289,9 @@ In the example (Kalimantan Tengah, 1 August to 31 October 2026, 100 m):
 
 18 alerts fell on pixels without a class (water and coast). Other land, 15% of the area, had more than half of the alerts.
 
-The figures of 3, 4 and 5 are saved in `output/figures/`. The GADM regencies are downloaded once to `output/gadm/`; the cities and basemap tiles are read from public sources when the notebook runs, no credential needed.
+6. A fire risk index of the forest and tree crops without alerts: the distance of each of their pixels to the nearest fire grid cell with alerts, as an index from 1 (next to such a cell) to 0 (the pixel furthest from any). Only the forest and tree classes of Forest Typology (primary, naturally regenerating, planted and plantation forest, and tree crops and agroforestry) in cells without alerts are kept. A table gives the forest area in ha per band of the index, and a table and map give the mean of the index per regency or city, each pixel weighted by its area (in the example from 0.80 in Murung Raya to 0.97 in Barito Timur). It is an indicator of closeness to recent fire activity, not a forecast: it leaves out weather, drought, peat, land use and access, and is not validated against later fires.
+
+The figures of 3 to 6 are saved in `output/figures/`. The GADM regencies are downloaded once to `output/gadm/`; the cities and basemap tiles are read from public sources when the notebook runs, no credential needed.
 
 ### Run it in Docker (recommended) ###
 
