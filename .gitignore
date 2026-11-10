@@ -8,3 +8,8 @@ __pycache__
 # Outputs are made by the jobs and the notebook
 output/*
 !output/.gitkeep
+
+*.pptx*
+*.docx*
+*.png*
+*.jpg*
