@@ -37,9 +37,14 @@ FIRMS_SOURCES = json.loads(
     )
 )
 
+# Pixel size of the Forest Typology 2020 output in metres (the dataset is 10 m). 100 m keeps a
+# province small, 1000 m gives the cells of the FIRMS grid
+FOREST_TYPOLOGY_RESOLUTION = int(getenv("FOREST_TYPOLOGY_RESOLUTION", "100"))
+
 # Every output is written under this local folder, nothing is uploaded
 OUTPUT = Path(getenv("OUTPUT_DIR", "output"))
 GADM_DIR = OUTPUT / "gadm"
 FIRMS_DIR = OUTPUT / "firms"
 FIRMS_GRID_DIR = OUTPUT / "firms_grid"
+FOREST_TYPOLOGY_DIR = OUTPUT / "forest_typology"
 FIGURE_DIR = OUTPUT / "figures"

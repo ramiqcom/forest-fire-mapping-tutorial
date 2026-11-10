@@ -19,6 +19,10 @@ services:
   firms_grid:
     <<: *app
     command: [ "python", "-m", "job.firms_grid" ]
+  # Step 2b, Forest Typology 2020 land cover of the AOI, docker compose run --rm forest_typology
+  forest_typology:
+    <<: *app
+    command: [ "python", "-m", "job.forest_typology" ]
   # Step 3, docker compose up notebook, then open http://localhost:8888/lab?token=forest-fire
   notebook:
     <<: *app

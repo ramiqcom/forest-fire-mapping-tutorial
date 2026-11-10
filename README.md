@@ -19,6 +19,7 @@ The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset i
 - [Step 0: set up the project and credentials](#step-0-set-up-the-project-and-credentials)
 - [Step 1: get the FIRMS data](#step-1-get-the-firms-data)
 - [Step 2: make the FIRMS grid](#step-2-make-the-firms-grid)
+- [Step 2b: get the Forest Typology 2020 land cover](#step-2b-get-the-forest-typology-2020-land-cover)
 - [Step 3: run the notebook](#step-3-run-the-notebook)
 - [Choose your area and period](#choose-your-area-and-period)
 - [Running without Docker](#running-without-docker)
@@ -30,14 +31,18 @@ The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset i
 ```
  .env: COUNTRY, PROVINCES ──► GADM provinces and regencies, cached in output/gadm/
         │
- NASA FIRMS area API                 ESA WorldCover (water)        JRC forest 2020, Natural Earth cities
+ NASA FIRMS area API                 ESA WorldCover (water)        Natural Earth cities                
  (needs FIRMS_MAP_KEY)               public AWS bucket             (public)
         │                                   │                                  │
         ▼                                   ▼                                  ▼
  Step 1  job.firms  ──────────►  Step 2  job.firms_grid  ──────────►  Step 3  notebook/firms.ipynb
  output/firms/                   output/firms_grid/                   output/figures/
  <province>_<period>.fgb         <AOI_NAME>_<period>.tif              *.png
- one point per alert             alerts per ~1 km cell                maps
+ one point per alert             alerts per ~1 km cell                maps, alerts per land cover
+                                                                             ▲
+ Forest Typology 2020 (public Space4Good copy in Cloud Storage)              │
+        └──────────► Step 2b  job.forest_typology ──────────────────────────┘
+                     output/forest_typology/<AOI_NAME>_forest_typology_100m.tif
 ```
 
 | Path | What it is |
@@ -47,6 +52,7 @@ The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset i
 | [src/forest_fire/firms.py](src/forest_fire/firms.py) | The FIRMS area API client, adapted from `rs_open_source.nasa.firms` of remote-sensing-open-source-docker |
 | [job/firms/\_\_main\_\_.py](job/firms/__main__.py) | Step 1 |
 | [job/firms_grid/\_\_main\_\_.py](job/firms_grid/__main__.py) | Step 2 |
+| [job/forest_typology/\_\_main\_\_.py](job/forest_typology/__main__.py) Step 2b, land cover of the AOI |
 | [notebook/firms.ipynb](notebook/firms.ipynb) | Step 3 |
 | `output/` | Everything the steps make, including the GADM cache, not in git |
 
@@ -225,16 +231,65 @@ It took about 20 seconds for the example in our test. Intermediate files are in 
 
 Open the `.tif` in QGIS. The value of a cell is the number of alerts in the period; 0 is a land cell without alerts. Use a colour ramp such as *YlOrRd* with a log or cumulative count cut stretch, as a few cells have far more alerts than the rest.
 
+## Step 2b: get the Forest Typology 2020 land cover ##
+
+The notebook draws the land cover under the fire alerts and counts the alerts per land cover type. It comes from [Forest Typology 2020 v1](https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616) (ForTy, Google DeepMind, WRI, UMD and IIASA) tells them apart: for every 10 m pixel it gives the probability of primary forest, naturally regenerating forest, planted forest, plantation forest, and tree crops and agroforestry. That shows whether fire alerts fall in old forest, in regrowth, in plantations or outside forest.
+
+### What the job does ###
+
+[job/forest_typology](job/forest_typology/__main__.py) reads the public Space4Good copy of the dataset in Cloud Storage (`gs://s4g-green-finance-bucket/data/cog/forest_typology`), without a login:
+
+1. Finds the UTM grid zones over the AOI, and reads the place of each GeoTIFF of these zones from its header. The first time this takes a few seconds per zone; the result is kept in `output/forest_typology/index/`.
+2. Reprojects only the tiles over the AOI provinces onto one EPSG:4326 grid, averaging the probabilities. GDAL reads the overview of each tile closest to the resolution, not the 10 m pixels.
+3. Adds `OtherLand` (1 minus the 5 probabilities) and `class`, the most probable of the 6, and sets everything outside the AOI provinces to nodata.
+4. Writes a Cloud Optimised GeoTIFF to `output/forest_typology/<AOI_NAME>_forest_typology_<resolution>m.tif`, for example `output/forest_typology/kalimantan_tengah_forest_typology_100m.tif`.
+
+The resolution is `FOREST_TYPOLOGY_RESOLUTION` in `.env`, 100 m by default. The pixels nest in the 1 km cells of the FIRMS grid, and 1000 gives exactly the FIRMS grid. A finer resolution reads more data and makes a larger file: the size grows 100 times from 100 m to 10 m.
+
+### Run it ###
+
+```sh
+docker compose run --rm forest_typology
+```
+
+It does not need the FIRMS steps, run it before or after them, but before the notebook. For the example it took about one minute in our test (140 tiles of 4 zones) and made a file of 30 MB.
+
+### Check the result ###
+
+Open the `.tif` in QGIS. It has 7 bands, named in the file:
+
+| Band | Name | Values |
+|---|---|---|
+| 1 to 5 | `PrimaryForest`, `NaturallyRegeneratingForest`, `PlantedForest`, `PlantationForest`, `TreeCropsAndAgroforestry` | Probability from 0 to 250 (250 is 1) |
+| 6 | `OtherLand` | 250 minus the 5 probabilities |
+| 7 | `class` | 1 primary forest, 2 naturally regenerating forest, 3 planted forest, 4 plantation forest, 5 tree crops and agroforestry, 6 other land |
+
+255 is nodata. In the example, the class of 43.5% of the pixels of Kalimantan Tengah is primary forest, 27.4% naturally regenerating forest, 13.1% tree crops and agroforestry, 0.6% plantation forest and 15.4% other land. It shows 2020, not the land cover during the fires.
+
 ## Step 3: run the notebook ##
 
-[notebook/firms.ipynb](notebook/firms.ipynb) reads the outputs of steps 1 and 2 and makes four sets of maps of the AOI:
+[notebook/firms.ipynb](notebook/firms.ipynb) reads the outputs of steps 1, 2 and 2b and makes five sets of figures of the AOI:
 
 1. Provinces on a shaded relief basemap.
-2. FIRMS alerts by instrument, with the forest of 2020 ([JRC Global Forest Cover 2020](https://forobs.jrc.ec.europa.eu/GFC)) and cities above 100,000 people ([Natural Earth](https://www.naturalearthdata.com/)).
+2. FIRMS alerts by instrument, with the Forest Typology 2020 classes of step 2b and cities above 100,000 people ([Natural Earth](https://www.naturalearthdata.com/)).
 3. The fire count grid of step 2, with a log colour scale.
 4. Fire alerts per regency or city (kabupaten and kota, GADM level 2), in total and per 100 km².
+5. Fire alerts per land cover type: each alert gets the Forest Typology class of the pixel under its point, and each class gets its area in hectares (the pixels of each row times their area on a sphere, as pixels in degrees get smaller away from the equator). A table gives the alerts, their share, the area, its share and the alerts per 1,000 ha, and a bar chart the alerts per 1,000 ha.
 
-The figures of 3 and 4 are saved in `output/figures/`. The GADM regencies are downloaded once to `output/gadm/`; the forest, cities and basemap tiles are read from public sources when the notebook runs, no credential needed.
+In the example (Kalimantan Tengah, 1 August to 31 October 2026, 100 m):
+
+| Land cover 2020 | Alerts | Share of alerts | Area (ha) | Share of area | Alerts per 1,000 ha |
+|---|---|---|---|---|---|
+| Primary forest | 145,686 | 27.2% | 6,723,327 | 43.5% | 21.7 |
+| Naturally regenerating forest | 82,868 | 15.4% | 4,230,810 | 27.4% | 19.6 |
+| Planted forest | 0 | 0.0% | 0 | 0.0% | |
+| Plantation forest | 183 | 0.0% | 87,402 | 0.6% | 2.1 |
+| Tree crops and agroforestry | 19,368 | 3.6% | 2,016,196 | 13.1% | 9.6 |
+| Other land | 288,440 | 53.8% | 2,382,250 | 15.4% | 121.1 |
+
+18 alerts fell on pixels without a class (water and coast). Other land, 15% of the area, had more than half of the alerts.
+
+The figures of 3, 4 and 5 are saved in `output/figures/`. The GADM regencies are downloaded once to `output/gadm/`; the cities and basemap tiles are read from public sources when the notebook runs, no credential needed.
 
 ### Run it in Docker (recommended) ###
 
@@ -313,7 +368,7 @@ Run the commands from the project folder: the jobs read `.env` and write to `out
 | `No GADM province ... Check PROVINCES in .env, the provinces are: ...` | A name in `PROVINCES` is not a GADM province of `COUNTRY`. Copy the name from the list in the message |
 | `Missing output/firms/..., run job.firms first` | Step 1 did not finish every province of the AOI, or `PROVINCES` changed between step 1 and step 2 |
 | `The gdal command line ... is not installed` | Step 2 outside Docker without GDAL 3.11+. Use `docker compose run --rm firms_grid` |
-| `FileNotFoundError` or `DataSourceError` in the notebook | The outputs of steps 1 or 2 are missing for the AOI and period of `.env`, for example `.env` changed after step 2. Restart the kernel after changing `.env` |
+| `FileNotFoundError` or `DataSourceError` in the notebook | The outputs of steps 1, 2 or 2b are missing for the AOI and period of `.env`, for example `.env` changed after step 2. Restart the kernel after changing `.env` |
 | `port is already allocated` for the notebook | Another JupyterLab uses port 8888. Stop it, or change the first `8888` under `ports` in [docker-compose.yml](docker-compose.yml) |
 | A step was stopped half way | Run it again. Files are written under a temporary name and renamed when complete, so no partial file is skipped |
 
@@ -323,7 +378,7 @@ Run the commands from the project folder: the jobs read `.env` and write to `out
 |---|---|---|
 | Fire alerts | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/), VIIRS and MODIS near real time | NASA open data, cite FIRMS, see the [citation guidance in the FIRMS FAQ](https://www.earthdata.nasa.gov/data/tools/firms/faq) |
 | Provinces and regencies | [GADM 4.1](https://gadm.org/), levels 1 and 2 | Free for non-commercial use, other use needs permission, see https://gadm.org/license.html |
-| Forest 2020 | [JRC Global Forest Cover 2020 v4](https://forobs.jrc.ec.europa.eu/GFC) | CC BY 4.0, European Commission |
+| Land cover 2020 | [Forest Typology 2020 v1](https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616), Google DeepMind, WRI, UMD and IIASA, read from a Space4Good copy | CC BY 4.0 |
 | Water | [ESA WorldCover 2021 v200](https://esa-worldcover.org/) | CC BY 4.0, ESA |
 | Cities | [Natural Earth](https://www.naturalearthdata.com/) populated places | Public domain |
 | Basemap | Esri World Shaded Relief | Keep the Esri attribution on the maps |
@@ -333,7 +388,8 @@ Read the maps with these limits in mind:
 - **An alert is not a fire and not a burned area.** It is a hot pixel (375 m for VIIRS, 1 km for MODIS) at the time of an overpass. One fire is counted on every overpass that sees it, a long fire counts many times, and a fire under thick smoke or cloud can be missed. Alerts can also come from other heat sources, such as gas flares or industry. Alert counts show where fire activity was detected, not how much area burned or why.
 - **The instruments differ.** VIIRS has smaller pixels and detects smaller fires than MODIS, and the number of satellites changes over time. Compare periods with the same sources.
 - **The grid counts fewer alerts than the points.** It counts alerts within half a cell from the cell centre, which leaves out alerts in the cell corners (about a fifth in a 10 day test over Kalimantan). Use the points or the admin level 2 counts for totals.
-- **Forest in 2020 does not mean forest in the mapped period.** The forest layer is a reference, it does not show whether a fire was in forest.
+- **The land cover is of 2020, not of the mapped period.** A forest cleared or burned since 2020 is still forest in Forest Typology, so alerts per land cover type show where alerts fell on the 2020 map, not what burned.
+- **An alert gets the class under its point.** The point is the centre of a 375 m VIIRS or 1 km MODIS pixel, larger than the 100 m land cover pixel, so the class of the point can differ from the rest of the satellite pixel, most at forest edges. Forest Typology classes are model predictions with their own errors, the most probable class is used.
 - **Cells near the coast and lakes** are masked with WorldCover 2021, read at about 1 km with the most common class, so small islands and narrow coasts can be left out.
 - **Cities**: Natural Earth has a few places that share a name and population with another one. The notebook leaves those out.
 
