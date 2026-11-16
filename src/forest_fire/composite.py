@@ -1,9 +1,9 @@
-"""Shared parts of the satellite composite jobs (job.s1_composite, job.opera_water_s1).
+"""Shared parts of the satellite composite jobs (job.s1_composite, job.gsw).
 
 Adapted from ``rs_open_source.utils`` of remote-sensing-open-source-docker: the AOI is split into
 grids of 0.5 degree on one pixel grid in EPSG:4326, each grid is composited on its own, and the
-grids are mosaicked into one Cloud Optimised GeoTIFF clipped to the AOI. The images are found with
-the STAC API of NASA Earthdata (CMR) and read by GDAL over https with an Earthdata login.
+grids are mosaicked into one Cloud Optimised GeoTIFF clipped to the AOI. The Sentinel-1 images are
+found with the STAC API of NASA Earthdata (CMR) and read by GDAL over https with an Earthdata login.
 """
 
 import atexit
@@ -224,7 +224,7 @@ def mosaic_to_grid(
     """The images of one date on the grid, written to ``output``.
 
     First the images are mosaicked and the mosaic reprojected onto the grid, as in rs_open_source.
-    That fails when the images are in different projections, such as the OPERA files of two UTM
+    That fails when the images are in different projections, such as the Sentinel-1 bursts of two UTM
     zones (Kalimantan spans zones 49 and 50), or when one image can not be read. Then each image is
     reprojected onto the grid on its own and the reprojected images are mosaicked; an image that
     still fails is left out.

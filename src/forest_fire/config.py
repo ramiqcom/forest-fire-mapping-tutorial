@@ -68,10 +68,10 @@ S1_RESOLUTION = int(getenv("S1_RESOLUTION", "30"))
 S1_ORBIT = getenv("S1_ORBIT", "both").strip().lower()
 S1_GAUSSIAN_SIZE = int(getenv("S1_GAUSSIAN_SIZE", "3"))
 
-# OPERA surface water from Sentinel-1 of job.opera_water_s1, one composite per period, the periods of
-# the Sentinel-1 composites by default, and its pixel size in metres
-OPERA_WATER_PERIODS = parse_periods(getenv("OPERA_WATER_PERIODS", getenv("S1_PERIODS", DEFAULT_S1_PERIODS)))
-OPERA_WATER_RESOLUTION = int(getenv("OPERA_WATER_RESOLUTION", "30"))
+# JRC Global Surface Water of job.gsw: the layers, one band per layer (occurrence, change, seasonality,
+# recurrence, transitions, extent), and the pixel size in metres
+GSW_LAYERS = json.loads(getenv("GSW_LAYERS", '["occurrence"]'))
+GSW_RESOLUTION = int(getenv("GSW_RESOLUTION", "30"))
 
 # NASA Earthdata login of the Sentinel-1 jobs, free at https://urs.earthdata.nasa.gov/users/new
 EARTHDATA_USERNAME = getenv("EARTHDATA_USERNAME")
@@ -84,5 +84,5 @@ FIRMS_DIR = OUTPUT / "firms"
 FIRMS_GRID_DIR = OUTPUT / "firms_grid"
 FOREST_TYPOLOGY_DIR = OUTPUT / "forest_typology"
 S1_DIR = OUTPUT / "s1"
-OPERA_WATER_DIR = OUTPUT / "opera_water_s1"
+GSW_DIR = OUTPUT / "gsw"
 FIGURE_DIR = OUTPUT / "figures"

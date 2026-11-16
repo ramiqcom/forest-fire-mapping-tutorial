@@ -23,14 +23,14 @@ services:
   forest_typology:
     <<: *app
     command: [ "python", "-m", "job.forest_typology" ]
-  # Optional, Sentinel-1 radar composites per month, docker compose run --rm s1_composite
+  # Optional, Sentinel-1 radar composites per period, docker compose run --rm s1_composite
   s1_composite:
     <<: *app
     command: [ "python", "-m", "job.s1_composite" ]
-  # Optional, OPERA surface water from Sentinel-1 per month, docker compose run --rm opera_water_s1
-  opera_water_s1:
+  # Optional, JRC Global Surface Water 1984-2024, docker compose run --rm gsw
+  gsw:
     <<: *app
-    command: [ "python", "-m", "job.opera_water_s1" ]
+    command: [ "python", "-m", "job.gsw" ]
   # Step 3, docker compose up notebook, then open http://localhost:8888/lab?token=forest-fire
   notebook:
     <<: *app

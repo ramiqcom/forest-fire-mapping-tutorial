@@ -10,7 +10,7 @@ You choose the area of interest (AOI) as input: a list of provinces from [GADM](
 
 Everything runs and stays on your computer: every step writes to the local `output/` folder and nothing is uploaded to a cloud bucket. The internet is only used to read the public input data.
 
-The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset is public; only the optional Sentinel-1 jobs need a free NASA Earthdata login.
+The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset is public; only the optional Sentinel-1 job needs a free NASA Earthdata login.
 
 ## Contents ##
 
@@ -20,7 +20,8 @@ The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset i
 - [Step 1: get the FIRMS data](#step-1-get-the-firms-data)
 - [Step 2: make the FIRMS grid](#step-2-make-the-firms-grid)
 - [Step 2b: get the Forest Typology 2020 land cover](#step-2b-get-the-forest-typology-2020-land-cover)
-- [Optional: Sentinel-1 radar composites and surface water](#optional-sentinel-1-radar-composites)
+- [Optional: Sentinel-1 radar composites](#optional-sentinel-1-radar-composites)
+- [Optional: surface water history](#optional-surface-water-history)
 - [Step 3: run the notebook](#step-3-run-the-notebook)
 - [Choose your area and period](#choose-your-area-and-period)
 - [Running without Docker](#running-without-docker)
@@ -106,7 +107,7 @@ Open `.env` and paste your key:
 FIRMS_MAP_KEY="your key here"
 ```
 
-That is the only credential of the main steps. No Google Cloud, GitHub or AWS account is needed. The optional Sentinel-1 jobs also need a free NASA Earthdata login, see [Earthdata login](#earthdata-login). `.env` is in `.gitignore`, keep it out of git.
+That is the only credential of the main steps. No Google Cloud, GitHub or AWS account is needed. The optional Sentinel-1 job also needs a free NASA Earthdata login, see [Earthdata login](#earthdata-login). `.env` is in `.gitignore`, keep it out of git.
 
 The other settings in `.env` are your inputs. The values of `.env.example` run the full example:
 
@@ -269,7 +270,7 @@ Open the `.tif` in QGIS. It has 7 bands, named in the file:
 
 ## Optional: Sentinel-1 radar composites ##
 
-FIRMS sees heat, not what changed on the ground, and optical images are hidden by smoke and cloud in the fire season. Radar sees through both. Two optional jobs make Sentinel-1 composites of the AOI over periods of two weeks, by default 1 to 14 June 2026 (before the fire season) and 1 to 14 November 2026 (after it), to compare the land surface before and after. Sentinel-1 passes every 12 days, so two weeks cover the whole AOI: in the example both periods covered all of Kalimantan Tengah, with 5 or 6 dates each. They are not used by the notebook. Both read NASA OPERA products from NASA Earthdata and need a free Earthdata login, see [Earthdata login](#earthdata-login).
+FIRMS sees heat, not what changed on the ground, and optical images are hidden by smoke and cloud in the fire season. Radar sees through both. An optional job makes Sentinel-1 composites of the AOI over periods of two weeks, by default 1 to 14 June 2026 (before the fire season) and 1 to 14 November 2026 (after it), to compare the land surface before and after. Sentinel-1 passes every 12 days, so two weeks cover the whole AOI: in the example both periods covered all of Kalimantan Tengah, with 5 or 6 dates each. 18 to 31 October 2026 had only 3 dates covering 66% of the province, so check the coverage of a period before choosing it. It is not used by the notebook. It reads the NASA OPERA RTC-S1 product from NASA Earthdata and needs a free Earthdata login, see [Earthdata login](#earthdata-login).
 
 ### Earthdata login ###
 
@@ -283,7 +284,7 @@ FIRMS sees heat, not what changed on the ground, and optical images are hidden b
 
 If the password contains `$`, put it in single quotes (`EARTHDATA_PASSWORD='pa$$word'`): Docker Compose reads `$` in double quotes as the start of a variable and changes the password.
 
-Each job first checks the login with the NASA login server and stops at once if it is wrong. It then writes it to a temporary `.netrc` file that GDAL uses to log in to the NASA servers, and removes it when the job ends. Treat them as a password, keep `.env` out of git.
+The job first checks the login with the NASA login server and stops at once if it is wrong. It then writes it to a temporary `.netrc` file that GDAL uses to log in to the NASA servers, and removes it when the job ends. Treat them as a password, keep `.env` out of git.
 
 ### Radar backscatter: job.s1_composite ###
 
@@ -309,26 +310,25 @@ S1_RUN_TIME
 
 Open the `.tif` in QGIS. Band 1 is VV and band 2 VH, the backscatter (gamma0) times 10,000 in linear power, 0 is nodata: 2,000 is a gamma0 of 0.2, or -7 dB (10 x log10 of the value / 10,000). Show VV, VH and VV/VH as red, green and blue, or compare the two months: a strong drop of VH between June and November in a forest can show burned or cleared forest. The composite is a median of the dates of the period, so a change during the period shows only partly.
 
-### Surface water: job.opera_water_s1 ###
+## Optional: surface water history ##
 
-[job/opera_water_s1](job/opera_water_s1/__main__.py) reads [OPERA DSWx-S1](https://www.earthdata.nasa.gov/data/catalog/pocloud-opera-l3-dswx-s1-v1-1.0), the surface water extent from Sentinel-1 in tiles of 30 m, found with the STAC API of NASA Earthdata (PO.DAAC). Per grid it takes the water class of each date, then the most common class of the period, and writes `output/opera_water_s1/<AOI_NAME>_opera_water_s1_<start>_<end>_<resolution>m.tif` with the colour table of the product:
+[job/gsw](job/gsw/__main__.py) reads [JRC Global Surface Water v1.5](https://global-surface-water.appspot.com/download) (1984 to 2024), the water mapped from every Landsat image of the last 40 years by the European Commission Joint Research Centre and Google. It shows rivers, lakes and the wetlands and peat swamps that flood part of the year, the land where peat fires burn longest. It needs no login: the job reads the public 10 x 10 degree tiles (about 30 m) directly. The method is the one of `rs_open_source.jrc.gsw` of remote-sensing-open-source-docker:
 
-| Value | Class |
-|---|---|
-| 0 | Not water |
-| 1 | Open water |
-| 3 | Inundated vegetation |
-| 250 | Masked by the height above nearest drainage (HAND) |
-| 251 | Masked for radar layover or shadow |
-| 255 | No data |
+1. Splits the AOI into grids of 0.5° on one pixel grid of `GSW_RESOLUTION` metres (30 m by default) in EPSG:4326, as the Sentinel-1 job does.
+2. Per grid and layer, mosaics the tiles over the grid and reprojects them onto it: the average for the percentages (`occurrence`, `recurrence`), the most common value for the classes and counts.
+3. Stacks the layers, one band per layer.
+4. Mosaics the grids, clips them to the AOI and writes a Cloud Optimised GeoTIFF to `output/gsw/<AOI_NAME>_gsw_<resolution>m.tif`, for example `output/gsw/kalimantan_tengah_gsw_30m.tif`.
 
-The periods are those of `S1_PERIODS`, or `OPERA_WATER_PERIODS` in `.env`, and the pixel size `OPERA_WATER_RESOLUTION` (30 m). OPERA does not produce DSWx-S1 for every period everywhere: over Kalimantan Tengah there is no granule for July and August 2026, so June is used before the fire season. A period without data is skipped with a warning. Check the coverage of a period before choosing it: in the example, 18 to 31 October 2026 had only 3 dates, covering 66% (radar) and 88% (water) of the province.
+| Setting in `.env` | Default | Meaning |
+|---|---|---|
+| `GSW_LAYERS` | `["occurrence"]` | Layers, one band each, any of `occurrence`, `change`, `seasonality`, `recurrence`, `transitions`, `extent` |
+| `GSW_RESOLUTION` | `30` | Pixel size in metres |
 
 ```sh
-docker compose run --rm opera_water_s1
+docker compose run --rm gsw
 ```
 
-WATER_RUN_TIME
+`occurrence` is the percentage of the valid Landsat observations from 1984 to 2024 in which the pixel was water: 100 is permanent water, a low value water that comes and goes. `seasonality` is the number of months with water in 2024, `transitions` the change from the first to the last year (for example new seasonal or lost permanent water). 255 is nodata in every band. The layers describe 1984 to 2024, not the fire season of the alerts, and Landsat misses water under cloud and dense forest canopy.
 
 ## Step 3: run the notebook ##
 
@@ -448,7 +448,7 @@ Run the commands from the project folder: the jobs read `.env` and write to `out
 | Provinces and regencies | [GADM 4.1](https://gadm.org/), levels 1 and 2 | Free for non-commercial use, other use needs permission, see https://gadm.org/license.html |
 | Land cover 2020 | [Forest Typology 2020 v1](https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616), Google DeepMind, WRI, UMD and IIASA, read from [Source Cooperative](https://source.coop/epoch/forest-typology-2020) | CC BY 4.0 |
 | Radar (optional) | [OPERA RTC-S1](https://www.earthdata.nasa.gov/data/catalog/asf-opera-l2-rtc-s1-v1-1), NASA JPL OPERA via ASF DAAC, from Copernicus Sentinel-1 | NASA open data, cite OPERA and Copernicus Sentinel-1 |
-| Surface water (optional) | [OPERA DSWx-S1](https://www.earthdata.nasa.gov/data/catalog/pocloud-opera-l3-dswx-s1-v1-1.0), NASA JPL OPERA via PO.DAAC, from Copernicus Sentinel-1 | NASA open data, cite OPERA and Copernicus Sentinel-1 |
+| Surface water history (optional) | [JRC Global Surface Water v1.5](https://global-surface-water.appspot.com/download), EC Joint Research Centre and Google, from Landsat. Cite Pekel et al. (2016), [doi:10.1038/nature20584](https://doi.org/10.1038/nature20584) | See the terms of use on the [download page](https://global-surface-water.appspot.com/download), cite the dataset |
 | Water | [ESA WorldCover 2021 v200](https://esa-worldcover.org/) | CC BY 4.0, ESA |
 | Cities | [Natural Earth](https://www.naturalearthdata.com/) populated places | Public domain |
 | Basemap | Esri World Shaded Relief | Keep the Esri attribution on the maps |
