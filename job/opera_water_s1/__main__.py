@@ -42,6 +42,7 @@ from forest_fire.composite import (
     grid_bbox,
     make_grids,
     mosaic_grids,
+    mosaic_to_grid,
     pixel_grid,
     reproject_args,
     retry,
@@ -77,14 +78,7 @@ CLASSES = {
 
 def date_image(links: list[str], bbox, shape, folder: Path, name: str) -> str:
     """The water classes of one date on the grid, the most common class per pixel."""
-    output = folder / f"{name}.tif"
-    gdal(
-        "raster", "pipeline", "--quiet",
-        "!", "mosaic", "--resolution=average", "-i", write_list(folder / f"{name}.txt", links),
-        "!", "reproject", *reproject_args(bbox, shape, "mode"),
-        "!", "write", "--overwrite", "--co=COMPRESS=ZSTD", str(output),
-    )  # fmt: skip
-    return str(output)
+    return mosaic_to_grid(links, bbox, shape, "mode", folder / f"{name}.tif", folder, name)
 
 
 def grid_composite(grid: dict, items: list[dict], folder: Path) -> str | None:

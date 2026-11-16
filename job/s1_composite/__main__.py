@@ -41,6 +41,7 @@ from forest_fire.composite import (
     grid_bbox,
     make_grids,
     mosaic_grids,
+    mosaic_to_grid,
     pixel_grid,
     reproject_args,
     retry,
@@ -66,13 +67,7 @@ def asset_key(band: str) -> str:
 
 def date_image(links: list[str], bbox, shape, folder: Path, name: str) -> str:
     """One date and band on the grid: mosaic, reproject, scale to UInt16 and gaussian filter."""
-    mosaic = folder / f"{name}_mosaic.tif"
-    gdal(
-        "raster", "pipeline", "--quiet",
-        "!", "mosaic", "--resolution=average", "-i", write_list(folder / f"{name}.txt", links),
-        "!", "reproject", *reproject_args(bbox, shape, "lanczos"),
-        "!", "write", "--overwrite", "--co=COMPRESS=ZSTD", str(mosaic),
-    )  # fmt: skip
+    mosaic = Path(mosaic_to_grid(links, bbox, shape, "lanczos", folder / f"{name}_mosaic.tif", folder, name))
     scaled = folder / f"{name}.tif"
     steps = [
         "raster", "pipeline", "--quiet",

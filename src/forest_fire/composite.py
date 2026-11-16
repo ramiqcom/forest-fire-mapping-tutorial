@@ -12,10 +12,11 @@ import json
 import math
 import os
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from logging import getLogger
 from pathlib import Path
 from shutil import rmtree, which
-from subprocess import check_call
+from subprocess import CalledProcessError, check_call
 from time import sleep
 from urllib.error import HTTPError
 from urllib.parse import urlencode
@@ -215,6 +216,60 @@ def reproject_args(bbox, shape, resampling: str | None = None) -> list[str]:
         f"--size={shape[0]},{shape[1]}",
     ]  # fmt: skip
     return args + (["-r", resampling] if resampling else [])
+
+
+def mosaic_to_grid(
+    links: list[str], bbox, shape, resampling: str, output: Path, folder: Path, name: str
+) -> str:
+    """The images of one date on the grid, written to ``output``.
+
+    First the images are mosaicked and the mosaic reprojected onto the grid, as in rs_open_source.
+    That fails when the images are in different projections, such as the OPERA files of two UTM
+    zones (Kalimantan spans zones 49 and 50), or when one image can not be read. Then each image is
+    reprojected onto the grid on its own and the reprojected images are mosaicked; an image that
+    still fails is left out.
+    """
+    try:
+        gdal(
+            "raster", "pipeline", "--quiet",
+            "!", "mosaic", "--resolution=average", "-i", write_list(folder / f"{name}.txt", links),
+            "!", "reproject", *reproject_args(bbox, shape, resampling),
+            "!", "write", "--overwrite", "--co=COMPRESS=ZSTD", str(output),
+        )  # fmt: skip
+        return str(output)
+    except CalledProcessError as e:
+        logger.info(f"{name}: mosaic of {len(links)} images failed ({e}), reprojecting each image first")
+
+    def reproject_one(k: int, link: str) -> str:
+        path = folder / f"{name}_{k}.tif"
+        gdal(
+            "raster", "reproject", "--quiet", "--overwrite", *reproject_args(bbox, shape, resampling),
+            "--co=COMPRESS=ZSTD", link, str(path),
+        )  # fmt: skip
+        return str(path)
+
+    with ThreadPoolExecutor(TASKS) as executor:
+        jobs = [executor.submit(retry, reproject_one, k, link) for k, link in enumerate(links)]
+        reprojected = []
+        for link, job in zip(links, jobs):
+            try:
+                reprojected.append(job.result())
+            except Exception as e:
+                logger.warning(f"{name}: image left out, it could not be reprojected ({e}): {link[-80:]}")
+    if not reprojected:
+        raise RuntimeError(f"{name}: none of the {len(links)} images could be reprojected")
+
+    # The reprojected images are all on the grid, the mosaic only puts them together
+    gdal(
+        "raster", "pipeline", "--quiet",
+        "!", "mosaic", "--resolution=average", "-i", write_list(folder / f"{name}_reprojected.txt", reprojected),
+        "!", "reproject", *reproject_args(bbox, shape, "near"),
+        "!", "write", "--overwrite", "--co=COMPRESS=ZSTD", str(output),
+    )  # fmt: skip
+    for path in reprojected:
+        Path(path).unlink()
+    logger.info(f"{name}: mosaic of {len(reprojected)} of {len(links)} images reprojected first")
+    return str(output)
 
 
 def mosaic_grids(
