@@ -1,6 +1,7 @@
 """Settings shared by the jobs and the notebook, read from the environment or ``.env``."""
 
 import json
+from datetime import date
 from os import getenv
 from pathlib import Path
 
@@ -41,20 +42,35 @@ FIRMS_SOURCES = json.loads(
 # province small, 1000 m gives the cells of the FIRMS grid
 FOREST_TYPOLOGY_RESOLUTION = int(getenv("FOREST_TYPOLOGY_RESOLUTION", "100"))
 
-# Sentinel-1 composites of job.s1_composite: one per month (YYYY-MM, comma separated), before the
-# fire season and after it by default
-S1_MONTHS = [m.strip() for m in getenv("S1_MONTHS", "2026-06,2026-10").split(",") if m.strip()]
+
+def parse_periods(value: str) -> list[tuple[str, str]]:
+    """Periods written START/END, comma separated, e.g. 2026-06-01/2026-06-14,2026-11-01/2026-11-14."""
+    periods = []
+    for item in value.split(","):
+        if not item.strip():
+            continue
+        start, _, end = item.strip().partition("/")
+        if not end or date.fromisoformat(start) > date.fromisoformat(end):
+            raise ValueError(
+                f"Period {item!r} is not START/END with START not after END, e.g. 2026-06-01/2026-06-14"
+            )
+        periods.append((start, end))
+    return periods
+
+
+# Sentinel-1 composites of job.s1_composite: one per period. Two weeks before the fire season and two
+# weeks after it by default; Sentinel-1 passes every 12 days, so two weeks cover the whole AOI
+DEFAULT_S1_PERIODS = "2026-06-01/2026-06-14,2026-11-01/2026-11-14"
+S1_PERIODS = parse_periods(getenv("S1_PERIODS", DEFAULT_S1_PERIODS))
 # Pixel size in metres, the orbits to use (both, ascending or descending) and the size of the
 # gaussian filter against speckle (3 or 5, 0 for no filter)
 S1_RESOLUTION = int(getenv("S1_RESOLUTION", "30"))
 S1_ORBIT = getenv("S1_ORBIT", "both").strip().lower()
 S1_GAUSSIAN_SIZE = int(getenv("S1_GAUSSIAN_SIZE", "3"))
 
-# OPERA surface water from Sentinel-1 of job.opera_water_s1, one composite per month, the same
-# months as the Sentinel-1 composites by default, and its pixel size in metres
-OPERA_WATER_MONTHS = [
-    m.strip() for m in getenv("OPERA_WATER_MONTHS", ",".join(S1_MONTHS)).split(",") if m.strip()
-]
+# OPERA surface water from Sentinel-1 of job.opera_water_s1, one composite per period, the periods of
+# the Sentinel-1 composites by default, and its pixel size in metres
+OPERA_WATER_PERIODS = parse_periods(getenv("OPERA_WATER_PERIODS", getenv("S1_PERIODS", DEFAULT_S1_PERIODS)))
 OPERA_WATER_RESOLUTION = int(getenv("OPERA_WATER_RESOLUTION", "30"))
 
 # NASA Earthdata login of the Sentinel-1 jobs, free at https://urs.earthdata.nasa.gov/users/new

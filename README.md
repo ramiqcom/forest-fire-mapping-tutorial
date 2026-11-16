@@ -269,7 +269,7 @@ Open the `.tif` in QGIS. It has 7 bands, named in the file:
 
 ## Optional: Sentinel-1 radar composites ##
 
-FIRMS sees heat, not what changed on the ground, and optical images are hidden by smoke and cloud in the fire season. Radar sees through both. Two optional jobs make Sentinel-1 composites of the AOI per month, by default June 2026 (before the fire season) and October 2026 (at its end), to compare the land surface before and after. They are not used by the notebook. Both read NASA OPERA products from NASA Earthdata and need a free Earthdata login, see [Earthdata login](#earthdata-login).
+FIRMS sees heat, not what changed on the ground, and optical images are hidden by smoke and cloud in the fire season. Radar sees through both. Two optional jobs make Sentinel-1 composites of the AOI over periods of two weeks, by default 1 to 14 June 2026 (before the fire season) and 1 to 14 November 2026 (after it), to compare the land surface before and after. Sentinel-1 passes every 12 days, so two weeks cover the whole AOI: in the example both periods covered all of Kalimantan Tengah, with 5 or 6 dates each. They are not used by the notebook. Both read NASA OPERA products from NASA Earthdata and need a free Earthdata login, see [Earthdata login](#earthdata-login).
 
 ### Earthdata login ###
 
@@ -291,12 +291,12 @@ Each job first checks the login with the NASA login server and stops at once if 
 
 1. Splits the AOI (the provinces of `.env`, as for the FIRMS jobs) into grids of 0.5° on one pixel grid of `S1_RESOLUTION` metres (30 m by default) in EPSG:4326.
 2. Per grid and band (VV and VH), mosaics and reprojects the bursts of each date, scales them by 10,000 to integers and smooths them with a 3 x 3 gaussian filter against radar speckle.
-3. Takes the median of the dates of the month per band, and stacks VV and VH.
-4. Mosaics the grids, clips them to the AOI and writes a Cloud Optimised GeoTIFF to `output/s1/<AOI_NAME>_s1_rtc_<month>_<resolution>m.tif`, for example `output/s1/kalimantan_tengah_s1_rtc_2026-06_30m.tif`.
+3. Takes the median of the dates of the period per band, and stacks VV and VH.
+4. Mosaics the grids, clips them to the AOI and writes a Cloud Optimised GeoTIFF to `output/s1/<AOI_NAME>_s1_rtc_<start>_<end>_<resolution>m.tif`, for example `output/s1/kalimantan_tengah_s1_rtc_2026-06-01_2026-06-14_30m.tif`.
 
 | Setting in `.env` | Default | Meaning |
 |---|---|---|
-| `S1_MONTHS` | `2026-06,2026-10` | Months of the composites, `YYYY-MM`, comma separated |
+| `S1_PERIODS` | `2026-06-01/2026-06-14,2026-11-01/2026-11-14` | Periods of the composites, `START/END`, comma separated |
 | `S1_RESOLUTION` | `30` | Pixel size in metres |
 | `S1_ORBIT` | `both` | `both`, `ascending` or `descending` |
 | `S1_GAUSSIAN_SIZE` | `3` | Gaussian filter of each date, `3` or `5`, `0` for none |
@@ -307,11 +307,11 @@ docker compose run --rm s1_composite
 
 S1_RUN_TIME
 
-Open the `.tif` in QGIS. Band 1 is VV and band 2 VH, the backscatter (gamma0) times 10,000 in linear power, 0 is nodata: 2,000 is a gamma0 of 0.2, or -7 dB (10 x log10 of the value / 10,000). Show VV, VH and VV/VH as red, green and blue, or compare the two months: a strong drop of VH between June and October in a forest can show burned or cleared forest. The composite is a median, so a fire in the middle of a month shows only partly.
+Open the `.tif` in QGIS. Band 1 is VV and band 2 VH, the backscatter (gamma0) times 10,000 in linear power, 0 is nodata: 2,000 is a gamma0 of 0.2, or -7 dB (10 x log10 of the value / 10,000). Show VV, VH and VV/VH as red, green and blue, or compare the two months: a strong drop of VH between June and November in a forest can show burned or cleared forest. The composite is a median of the dates of the period, so a change during the period shows only partly.
 
 ### Surface water: job.opera_water_s1 ###
 
-[job/opera_water_s1](job/opera_water_s1/__main__.py) reads [OPERA DSWx-S1](https://www.earthdata.nasa.gov/data/catalog/pocloud-opera-l3-dswx-s1-v1-1.0), the surface water extent from Sentinel-1 in tiles of 30 m, found with the STAC API of NASA Earthdata (PO.DAAC). Per grid it takes the water class of each date, then the most common class of the month, and writes `output/opera_water_s1/<AOI_NAME>_opera_water_s1_<month>_<resolution>m.tif` with the colour table of the product:
+[job/opera_water_s1](job/opera_water_s1/__main__.py) reads [OPERA DSWx-S1](https://www.earthdata.nasa.gov/data/catalog/pocloud-opera-l3-dswx-s1-v1-1.0), the surface water extent from Sentinel-1 in tiles of 30 m, found with the STAC API of NASA Earthdata (PO.DAAC). Per grid it takes the water class of each date, then the most common class of the period, and writes `output/opera_water_s1/<AOI_NAME>_opera_water_s1_<start>_<end>_<resolution>m.tif` with the colour table of the product:
 
 | Value | Class |
 |---|---|
@@ -322,7 +322,7 @@ Open the `.tif` in QGIS. Band 1 is VV and band 2 VH, the backscatter (gamma0) ti
 | 251 | Masked for radar layover or shadow |
 | 255 | No data |
 
-The months are those of `S1_MONTHS`, or `OPERA_WATER_MONTHS` in `.env`, and the pixel size `OPERA_WATER_RESOLUTION` (30 m). OPERA does not produce DSWx-S1 for every month everywhere: over Kalimantan Tengah there is no granule for July and August 2026, so June is the month before the fire season. A month without data is skipped with a warning.
+The periods are those of `S1_PERIODS`, or `OPERA_WATER_PERIODS` in `.env`, and the pixel size `OPERA_WATER_RESOLUTION` (30 m). OPERA does not produce DSWx-S1 for every period everywhere: over Kalimantan Tengah there is no granule for July and August 2026, so June is used before the fire season. A period without data is skipped with a warning. Check the coverage of a period before choosing it: in the example, 18 to 31 October 2026 had only 3 dates, covering 66% (radar) and 88% (water) of the province.
 
 ```sh
 docker compose run --rm opera_water_s1

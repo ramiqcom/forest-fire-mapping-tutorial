@@ -12,7 +12,6 @@ import json
 import math
 import os
 import tempfile
-from calendar import monthrange
 from logging import getLogger
 from pathlib import Path
 from shutil import rmtree, which
@@ -64,12 +63,6 @@ def write_list(path: Path, paths: list[str]) -> str:
     """List of inputs in a file for ``-i @file``, a command line of many links is too long."""
     path.write_text("\n".join(paths) + "\n", encoding="utf-8")
     return f"@{path}"
-
-
-def month_range(month: str) -> tuple[str, str]:
-    """First and last day of a month written YYYY-MM."""
-    year, number = map(int, month.split("-"))
-    return f"{month}-01", f"{month}-{monthrange(year, number)[1]:02d}"
 
 
 def check_earthdata_login(username: str, password: str):

@@ -1,7 +1,7 @@
-"""Optional step: Sentinel-1 radar composites of the AOI, one per month, from NASA Earthdata.
+"""Optional step: Sentinel-1 radar composites of the AOI, one per period of two weeks, from NASA Earthdata.
 
-Radar sees through the smoke and cloud of the fire season, so a composite before the fires (June)
-and one after (October) show changes of the land surface that the FIRMS alerts can not show.
+Radar sees through the smoke and cloud of the fire season, so a composite before the fires (1 to 14 June)
+and one after (1 to 14 November) show changes of the land surface that the FIRMS alerts can not show.
 
 OPERA Radiometric Terrain Corrected backscatter from Sentinel-1 (RTC-S1, OPERA_L2_RTC-S1_V1, 30 m
 bursts), found with the STAC API of NASA Earthdata (ASF) and read with an Earthdata login
@@ -13,12 +13,12 @@ bursts), found with the STAC API of NASA Earthdata (ASF) and read with an Earthd
 2. Per grid and band (VV and VH), the bursts of each date are mosaicked and reprojected (lanczos),
    scaled by 10,000 to UInt16 (gamma0 x 10,000, 0 is nodata) and smoothed with a 3 x 3 gaussian
    filter against speckle.
-3. The median of the dates of the month is taken per band, and the bands are stacked.
+3. The median of the dates of the period is taken per band, and the bands are stacked.
 4. The grids are mosaicked, clipped to the AOI and written as a Cloud Optimised GeoTIFF.
 
-Writes ``output/s1/<AOI_NAME>_s1_rtc_<month>_<resolution>m.tif`` on this computer, 2 bands (vv, vh),
-UInt16, gamma0 x 10,000 in linear power, 0 is nodata. A month already done is skipped, delete its
-file to make it again.
+Writes ``output/s1/<AOI_NAME>_s1_rtc_<start>_<end>_<resolution>m.tif`` on this computer, 2 bands (vv, vh),
+UInt16, gamma0 x 10,000 in linear power, 0 is nodata. A period already done is skipped, delete its
+file to make it again. The periods are S1_PERIODS of .env, START/END comma separated.
 
 Needs the GDAL 3.11 or newer command line, which is in the Docker image.
 Run with ``docker compose run --rm s1_composite`` or ``python -m job.s1_composite``.
@@ -40,7 +40,6 @@ from forest_fire.composite import (
     gdal,
     grid_bbox,
     make_grids,
-    month_range,
     mosaic_grids,
     pixel_grid,
     reproject_args,
@@ -48,7 +47,7 @@ from forest_fire.composite import (
     stac_search,
     write_list,
 )
-from forest_fire.config import AOI_NAME, S1_DIR, S1_GAUSSIAN_SIZE, S1_MONTHS, S1_ORBIT, S1_RESOLUTION
+from forest_fire.config import AOI_NAME, S1_DIR, S1_GAUSSIAN_SIZE, S1_ORBIT, S1_PERIODS, S1_RESOLUTION
 
 basicConfig(level=INFO, format="%(asctime)s - %(name)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = getLogger("job.s1_composite")
@@ -94,7 +93,7 @@ def date_image(links: list[str], bbox, shape, folder: Path, name: str) -> str:
 
 
 def grid_composite(grid: dict, items: list[dict], folder: Path) -> str | None:
-    """Median of the dates of the month per band, the bands stacked, for one grid."""
+    """Median of the dates of the period per band, the bands stacked, for one grid."""
     bbox = grid_bbox(grid)
     shape = (grid["width"], grid["height"])
     grid_box = box(*bbox)
@@ -159,8 +158,8 @@ def grid_composite(grid: dict, items: list[dict], folder: Path) -> str | None:
     return str(stack)
 
 
-def run(month: str, output_path: Path):
-    start, end = month_range(month)
+def run(start: str, end: str, output_path: Path):
+    period = f"{start} to {end}"
     folder = S1_DIR / f"{output_path.stem}_work"
     folder.mkdir(parents=True, exist_ok=True)
 
@@ -176,11 +175,11 @@ def run(month: str, output_path: Path):
         items = [item for item in items if item["id"] in ids]
     dates = sorted({item["properties"]["datetime"][:10] for item in items})
     logger.info(
-        f"{month}: {len(items)} OPERA RTC-S1 bursts on {len(dates)} dates ({S1_ORBIT} orbits), "
+        f"{period}: {len(items)} OPERA RTC-S1 bursts on {len(dates)} dates ({S1_ORBIT} orbits), "
         f"{len(grids)} grids, {shape[0]} x {shape[1]} pixels of {S1_RESOLUTION} m"
     )
     if not items:
-        logger.warning(f"No OPERA RTC-S1 burst from {start} to {end}, {month} skipped")
+        logger.warning(f"No OPERA RTC-S1 burst from {start} to {end}, skipped")
         rmtree(folder)
         return
 
@@ -196,9 +195,9 @@ def run(month: str, output_path: Path):
             if result is not None:
                 results.append(result)
     if not results:
-        raise SystemExit(f"{month}: no grid could be made")
+        raise SystemExit(f"{period}: no grid could be made")
     if len(results) < len(grids):
-        logger.warning(f"{month}: {len(grids) - len(results)} of {len(grids)} grids missing in the mosaic")
+        logger.warning(f"{period}: {len(grids) - len(results)} of {len(grids)} grids missing in the mosaic")
 
     logger.info("Mosaic the grids, clip to the AOI and write the Cloud Optimised GeoTIFF")
     temp_path = folder / output_path.name
@@ -215,7 +214,7 @@ def run(month: str, output_path: Path):
         )
     temp_path.replace(output_path)
     rmtree(folder)
-    logger.info(f"{month} saved to {output_path}")
+    logger.info(f"{period} saved to {output_path}")
 
 
 def main():
@@ -225,13 +224,13 @@ def main():
         raise SystemExit(f"S1_GAUSSIAN_SIZE must be 0 (no filter), 3 or 5, got {S1_GAUSSIAN_SIZE}")
     earthdata_login()
     S1_DIR.mkdir(parents=True, exist_ok=True)
-    for month in S1_MONTHS:
-        output_path = S1_DIR / f"{AOI_NAME}_s1_rtc_{month}_{S1_RESOLUTION}m.tif"
+    for start, end in S1_PERIODS:
+        output_path = S1_DIR / f"{AOI_NAME}_s1_rtc_{start}_{end}_{S1_RESOLUTION}m.tif"
         if output_path.exists():
-            logger.info(f"Skip {month}, {output_path} exists, delete it to make it again")
+            logger.info(f"Skip {start} to {end}, {output_path} exists, delete it to make it again")
             continue
-        logger.info(f"Composite of {month}")
-        run(month, output_path)
+        logger.info(f"Composite of {start} to {end}")
+        run(start, end, output_path)
 
 
 if __name__ == "__main__":

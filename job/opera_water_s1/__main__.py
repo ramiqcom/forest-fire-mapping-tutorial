@@ -1,4 +1,4 @@
-"""Optional step: OPERA surface water from Sentinel-1 of the AOI, one composite per month.
+"""Optional step: OPERA surface water from Sentinel-1 of the AOI, one composite per period of two weeks.
 
 OPERA Dynamic Surface Water Extent from Sentinel-1 (DSWx-S1, OPERA_L3_DSWX-S1_V1, 30 m MGRS tiles),
 found with the STAC API of NASA Earthdata (PO.DAAC) and read with an Earthdata login
@@ -11,16 +11,17 @@ remote-sensing-open-source-docker:
    ``OPERA_WATER_RESOLUTION`` metres (30 m by default) in EPSG:4326.
 2. Per grid, the water classification (WTR layer) of each date is mosaicked and reprojected with
    the most common class.
-3. The most common class of the dates of the month is kept.
+3. The most common class of the dates of the period is kept.
 4. The grids are mosaicked, clipped to the AOI and written as a Cloud Optimised GeoTIFF with the
    colour table of DSWx-S1.
 
 Classes of the WTR layer: 0 not water, 1 open water, 3 inundated vegetation, 250 masked by the
 height above nearest drainage (HAND), 251 masked for radar layover or shadow, 255 nodata.
 
-Writes ``output/opera_water_s1/<AOI_NAME>_opera_water_s1_<month>_<resolution>m.tif`` on this
-computer. A month without any DSWx-S1 granule over the AOI is skipped with a warning; a month
-already done is skipped, delete its file to make it again.
+Writes ``output/opera_water_s1/<AOI_NAME>_opera_water_s1_<start>_<end>_<resolution>m.tif`` on this
+computer. The periods are OPERA_WATER_PERIODS of .env, those of S1_PERIODS by default. A period
+without any DSWx-S1 granule over the AOI is skipped with a warning; a period already done is
+skipped, delete its file to make it again.
 
 Run with ``docker compose run --rm opera_water_s1`` or ``python -m job.opera_water_s1``.
 """
@@ -40,7 +41,6 @@ from forest_fire.composite import (
     gdal,
     grid_bbox,
     make_grids,
-    month_range,
     mosaic_grids,
     pixel_grid,
     reproject_args,
@@ -48,7 +48,7 @@ from forest_fire.composite import (
     stac_search,
     write_list,
 )
-from forest_fire.config import AOI_NAME, OPERA_WATER_DIR, OPERA_WATER_MONTHS, OPERA_WATER_RESOLUTION
+from forest_fire.config import AOI_NAME, OPERA_WATER_DIR, OPERA_WATER_PERIODS, OPERA_WATER_RESOLUTION
 
 basicConfig(level=INFO, format="%(asctime)s - %(name)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = getLogger("job.opera_water_s1")
@@ -88,7 +88,7 @@ def date_image(links: list[str], bbox, shape, folder: Path, name: str) -> str:
 
 
 def grid_composite(grid: dict, items: list[dict], folder: Path) -> str | None:
-    """The most common water class of the dates of the month, for one grid."""
+    """The most common water class of the dates of the period, for one grid."""
     bbox = grid_bbox(grid)
     shape = (grid["width"], grid["height"])
     grid_box = box(*bbox)
@@ -140,8 +140,8 @@ def grid_composite(grid: dict, items: list[dict], folder: Path) -> str | None:
     return str(output)
 
 
-def run(month: str, output_path: Path):
-    start, end = month_range(month)
+def run(start: str, end: str, output_path: Path):
+    period = f"{start} to {end}"
     provinces = read_provinces()
     bbox, shape, pixel = pixel_grid(provinces, OPERA_WATER_RESOLUTION)
 
@@ -149,8 +149,8 @@ def run(month: str, output_path: Path):
     dates = sorted({item["properties"]["datetime"][:10] for item in items})
     if not items:
         logger.warning(
-            f"No DSWx-S1 granule over the AOI from {start} to {end}, {month} skipped. "
-            "OPERA does not produce every month everywhere, try a month before or after"
+            f"No DSWx-S1 granule over the AOI from {start} to {end}, skipped. "
+            "OPERA does not produce DSWx-S1 for every period everywhere, try dates before or after"
         )
         return
 
@@ -160,7 +160,7 @@ def run(month: str, output_path: Path):
     provinces.to_file(roi_path, driver="FlatGeobuf")
     grids = make_grids(provinces, bbox, shape, pixel)
     logger.info(
-        f"{month}: {len(items)} DSWx-S1 granules on {len(dates)} dates, {len(grids)} grids, "
+        f"{period}: {len(items)} DSWx-S1 granules on {len(dates)} dates, {len(grids)} grids, "
         f"{shape[0]} x {shape[1]} pixels of {OPERA_WATER_RESOLUTION} m"
     )
 
@@ -176,10 +176,10 @@ def run(month: str, output_path: Path):
             if result is not None:
                 results.append(result)
     if not results:
-        raise SystemExit(f"{month}: no grid could be made")
+        raise SystemExit(f"{period}: no grid could be made")
     if len(results) < len(grids):
         logger.warning(
-            f"{month}: {len(grids) - len(results)} of {len(grids)} grids without data in the mosaic"
+            f"{period}: {len(grids) - len(results)} of {len(grids)} grids without data in the mosaic"
         )
 
     logger.info("Mosaic the grids, clip to the AOI and write the Cloud Optimised GeoTIFF")
@@ -199,19 +199,21 @@ def run(month: str, output_path: Path):
         )
     temp_path.replace(output_path)
     rmtree(folder)
-    logger.info(f"{month} saved to {output_path}")
+    logger.info(f"{period} saved to {output_path}")
 
 
 def main():
     earthdata_login()
     OPERA_WATER_DIR.mkdir(parents=True, exist_ok=True)
-    for month in OPERA_WATER_MONTHS:
-        output_path = OPERA_WATER_DIR / f"{AOI_NAME}_opera_water_s1_{month}_{OPERA_WATER_RESOLUTION}m.tif"
+    for start, end in OPERA_WATER_PERIODS:
+        output_path = (
+            OPERA_WATER_DIR / f"{AOI_NAME}_opera_water_s1_{start}_{end}_{OPERA_WATER_RESOLUTION}m.tif"
+        )
         if output_path.exists():
-            logger.info(f"Skip {month}, {output_path} exists, delete it to make it again")
+            logger.info(f"Skip {start} to {end}, {output_path} exists, delete it to make it again")
             continue
-        logger.info(f"Composite of {month}")
-        run(month, output_path)
+        logger.info(f"Composite of {start} to {end}")
+        run(start, end, output_path)
 
 
 if __name__ == "__main__":
