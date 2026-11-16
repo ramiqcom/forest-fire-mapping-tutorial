@@ -10,7 +10,7 @@ You choose the area of interest (AOI) as input: a list of provinces from [GADM](
 
 Everything runs and stays on your computer: every step writes to the local `output/` folder and nothing is uploaded to a cloud bucket. The internet is only used to read the public input data.
 
-The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset is public.
+The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset is public; only the optional Sentinel-1 jobs need a free NASA Earthdata login.
 
 ## Contents ##
 
@@ -20,6 +20,7 @@ The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset i
 - [Step 1: get the FIRMS data](#step-1-get-the-firms-data)
 - [Step 2: make the FIRMS grid](#step-2-make-the-firms-grid)
 - [Step 2b: get the Forest Typology 2020 land cover](#step-2b-get-the-forest-typology-2020-land-cover)
+- [Optional: Sentinel-1 radar composites and surface water](#optional-sentinel-1-radar-composites)
 - [Step 3: run the notebook](#step-3-run-the-notebook)
 - [Choose your area and period](#choose-your-area-and-period)
 - [Running without Docker](#running-without-docker)
@@ -40,7 +41,7 @@ The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset i
  <province>_<period>.fgb         <AOI_NAME>_<period>.tif              *.png
  one point per alert             alerts per ~1 km cell                maps, alerts per land cover
                                                                              ▲
- Forest Typology 2020 (public Space4Good copy in Cloud Storage)              │
+ Forest Typology 2020 (public, Source Cooperative)                           │
         └──────────► Step 2b  job.forest_typology ──────────────────────────┘
                      output/forest_typology/<AOI_NAME>_forest_typology_100m.tif
 ```
@@ -105,7 +106,7 @@ Open `.env` and paste your key:
 FIRMS_MAP_KEY="your key here"
 ```
 
-That is the only credential. No Google Cloud, GitHub, NASA Earthdata or AWS account is needed. `.env` is in `.gitignore`, keep it out of git.
+That is the only credential of the main steps. No Google Cloud, GitHub or AWS account is needed. The optional Sentinel-1 jobs also need a free NASA Earthdata login, see [Earthdata login](#earthdata-login). `.env` is in `.gitignore`, keep it out of git.
 
 The other settings in `.env` are your inputs. The values of `.env.example` run the full example:
 
@@ -233,13 +234,13 @@ Open the `.tif` in QGIS. The value of a cell is the number of alerts in the peri
 
 ## Step 2b: get the Forest Typology 2020 land cover ##
 
-The notebook draws the land cover under the fire alerts and counts the alerts per land cover type. It comes from [Forest Typology 2020 v1](https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616) (ForTy, Google DeepMind, WRI, UMD and IIASA) tells them apart: for every 10 m pixel it gives the probability of primary forest, naturally regenerating forest, planted forest, plantation forest, and tree crops and agroforestry. That shows whether fire alerts fall in old forest, in regrowth, in plantations or outside forest.
+The notebook draws the land cover under the fire alerts and counts the alerts per land cover type. It comes from [Forest Typology 2020 v1](https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616) (ForTy, Google DeepMind, WRI, UMD and IIASA), which tells them apart: for every 10 m pixel it gives the probability of primary forest, naturally regenerating forest, planted forest, plantation forest, and tree crops and agroforestry. That shows whether fire alerts fall in old forest, in regrowth, in plantations or outside forest.
 
 ### What the job does ###
 
-[job/forest_typology](job/forest_typology/__main__.py) reads the public Space4Good copy of the dataset in Cloud Storage (`gs://s4g-green-finance-bucket/data/cog/forest_typology`), without a login:
+[job/forest_typology](job/forest_typology/__main__.py) reads the dataset from [Source Cooperative](https://source.coop/epoch/forest-typology-2020), as in remote-sensing-open-source-docker, without a login:
 
-1. Finds the UTM grid zones over the AOI, and reads the place of each GeoTIFF of these zones from its header. The first time this takes a few seconds per zone; the result is kept in `output/forest_typology/index/`.
+1. Finds the tiles over the AOI in a tile index, a FlatGeobuf with a spatial index made by Space4Good from the Source Cooperative items and read by bounding box in a few small requests. The tiles are Cloud Optimised GeoTIFFs of about 33 x 45 km, read from the public S3 bucket of Source Cooperative (its https links go through a CDN where reading parts of a file is much slower).
 2. Reprojects only the tiles over the AOI provinces onto one EPSG:4326 grid, averaging the probabilities. GDAL reads the overview of each tile closest to the resolution, not the 10 m pixels.
 3. Adds `OtherLand` (1 minus the 5 probabilities) and `class`, the most probable of the 6, and sets everything outside the AOI provinces to nodata.
 4. Writes a Cloud Optimised GeoTIFF to `output/forest_typology/<AOI_NAME>_forest_typology_<resolution>m.tif`, for example `output/forest_typology/kalimantan_tengah_forest_typology_100m.tif`.
@@ -252,7 +253,7 @@ The resolution is `FOREST_TYPOLOGY_RESOLUTION` in `.env`, 100 m by default. The 
 docker compose run --rm forest_typology
 ```
 
-It does not need the FIRMS steps, run it before or after them, but before the notebook. For the example it took about one minute in our test (140 tiles of 4 zones) and made a file of 30 MB.
+It does not need the FIRMS steps, run it before or after them, but before the notebook. For the example it took under one minute in our test (140 tiles) and made a file of 30 MB.
 
 ### Check the result ###
 
@@ -265,6 +266,69 @@ Open the `.tif` in QGIS. It has 7 bands, named in the file:
 | 7 | `class` | 1 primary forest, 2 naturally regenerating forest, 3 planted forest, 4 plantation forest, 5 tree crops and agroforestry, 6 other land |
 
 255 is nodata. In the example, the class of 43.5% of the pixels of Kalimantan Tengah is primary forest, 27.4% naturally regenerating forest, 13.1% tree crops and agroforestry, 0.6% plantation forest and 15.4% other land. It shows 2020, not the land cover during the fires.
+
+## Optional: Sentinel-1 radar composites ##
+
+FIRMS sees heat, not what changed on the ground, and optical images are hidden by smoke and cloud in the fire season. Radar sees through both. Two optional jobs make Sentinel-1 composites of the AOI per month, by default June 2026 (before the fire season) and October 2026 (at its end), to compare the land surface before and after. They are not used by the notebook. Both read NASA OPERA products from NASA Earthdata and need a free Earthdata login, see [Earthdata login](#earthdata-login).
+
+### Earthdata login ###
+
+1. Register for free at https://urs.earthdata.nasa.gov/users/new.
+2. Put the user name and password in `.env`:
+
+   ```sh
+   EARTHDATA_USERNAME="your user name"
+   EARTHDATA_PASSWORD="your password"
+   ```
+
+If the password contains `$`, put it in single quotes (`EARTHDATA_PASSWORD='pa$$word'`): Docker Compose reads `$` in double quotes as the start of a variable and changes the password.
+
+Each job first checks the login with the NASA login server and stops at once if it is wrong. It then writes it to a temporary `.netrc` file that GDAL uses to log in to the NASA servers, and removes it when the job ends. Treat them as a password, keep `.env` out of git.
+
+### Radar backscatter: job.s1_composite ###
+
+[job/s1_composite](job/s1_composite/__main__.py) reads [OPERA RTC-S1](https://www.earthdata.nasa.gov/data/catalog/asf-opera-l2-rtc-s1-v1-1), the radiometric terrain corrected backscatter of Sentinel-1 in bursts of 30 m, found with the STAC API of NASA Earthdata (ASF). The method is the one of remote-sensing-open-source-docker:
+
+1. Splits the AOI (the provinces of `.env`, as for the FIRMS jobs) into grids of 0.5° on one pixel grid of `S1_RESOLUTION` metres (30 m by default) in EPSG:4326.
+2. Per grid and band (VV and VH), mosaics and reprojects the bursts of each date, scales them by 10,000 to integers and smooths them with a 3 x 3 gaussian filter against radar speckle.
+3. Takes the median of the dates of the month per band, and stacks VV and VH.
+4. Mosaics the grids, clips them to the AOI and writes a Cloud Optimised GeoTIFF to `output/s1/<AOI_NAME>_s1_rtc_<month>_<resolution>m.tif`, for example `output/s1/kalimantan_tengah_s1_rtc_2026-06_30m.tif`.
+
+| Setting in `.env` | Default | Meaning |
+|---|---|---|
+| `S1_MONTHS` | `2026-06,2026-10` | Months of the composites, `YYYY-MM`, comma separated |
+| `S1_RESOLUTION` | `30` | Pixel size in metres |
+| `S1_ORBIT` | `both` | `both`, `ascending` or `descending` |
+| `S1_GAUSSIAN_SIZE` | `3` | Gaussian filter of each date, `3` or `5`, `0` for none |
+
+```sh
+docker compose run --rm s1_composite
+```
+
+S1_RUN_TIME
+
+Open the `.tif` in QGIS. Band 1 is VV and band 2 VH, the backscatter (gamma0) times 10,000 in linear power, 0 is nodata: 2,000 is a gamma0 of 0.2, or -7 dB (10 x log10 of the value / 10,000). Show VV, VH and VV/VH as red, green and blue, or compare the two months: a strong drop of VH between June and October in a forest can show burned or cleared forest. The composite is a median, so a fire in the middle of a month shows only partly.
+
+### Surface water: job.opera_water_s1 ###
+
+[job/opera_water_s1](job/opera_water_s1/__main__.py) reads [OPERA DSWx-S1](https://www.earthdata.nasa.gov/data/catalog/pocloud-opera-l3-dswx-s1-v1-1.0), the surface water extent from Sentinel-1 in tiles of 30 m, found with the STAC API of NASA Earthdata (PO.DAAC). Per grid it takes the water class of each date, then the most common class of the month, and writes `output/opera_water_s1/<AOI_NAME>_opera_water_s1_<month>_<resolution>m.tif` with the colour table of the product:
+
+| Value | Class |
+|---|---|
+| 0 | Not water |
+| 1 | Open water |
+| 3 | Inundated vegetation |
+| 250 | Masked by the height above nearest drainage (HAND) |
+| 251 | Masked for radar layover or shadow |
+| 255 | No data |
+
+The months are those of `S1_MONTHS`, or `OPERA_WATER_MONTHS` in `.env`, and the pixel size `OPERA_WATER_RESOLUTION` (30 m). OPERA does not produce DSWx-S1 for every month everywhere: over Kalimantan Tengah there is no granule for July and August 2026, so June is the month before the fire season. A month without data is skipped with a warning.
+
+```sh
+docker compose run --rm opera_water_s1
+```
+
+WATER_RUN_TIME
 
 ## Step 3: run the notebook ##
 
@@ -371,6 +435,8 @@ Run the commands from the project folder: the jobs read `.env` and write to `out
 | `Missing output/firms/..., run job.firms first` | Step 1 did not finish every province of the AOI, or `PROVINCES` changed between step 1 and step 2 |
 | `The gdal command line ... is not installed` | Step 2 outside Docker without GDAL 3.11+. Use `docker compose run --rm firms_grid` |
 | `FileNotFoundError` or `DataSourceError` in the notebook | The outputs of steps 1, 2 or 2b are missing for the AOI and period of `.env`, for example `.env` changed after step 2. Restart the kernel after changing `.env` |
+| `The Earthdata login of .env is not valid (HTTP 401)` | Wrong `EARTHDATA_USERNAME` or `EARTHDATA_PASSWORD`, or the account is not activated yet. Log in at https://urs.earthdata.nasa.gov to check |
+| `EARTHDATA_USERNAME and EARTHDATA_PASSWORD are not set in .env` | Add the Earthdata login to `.env`, see [Earthdata login](#earthdata-login) |
 | `port is already allocated` for the notebook | Another JupyterLab uses port 8888. Stop it, or change the first `8888` under `ports` in [docker-compose.yml](docker-compose.yml) |
 | A step was stopped half way | Run it again. Files are written under a temporary name and renamed when complete, so no partial file is skipped |
 
@@ -380,7 +446,9 @@ Run the commands from the project folder: the jobs read `.env` and write to `out
 |---|---|---|
 | Fire alerts | [NASA FIRMS](https://firms.modaps.eosdis.nasa.gov/), VIIRS and MODIS near real time | NASA open data, cite FIRMS, see the [citation guidance in the FIRMS FAQ](https://www.earthdata.nasa.gov/data/tools/firms/faq) |
 | Provinces and regencies | [GADM 4.1](https://gadm.org/), levels 1 and 2 | Free for non-commercial use, other use needs permission, see https://gadm.org/license.html |
-| Land cover 2020 | [Forest Typology 2020 v1](https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616), Google DeepMind, WRI, UMD and IIASA, read from a Space4Good copy | CC BY 4.0 |
+| Land cover 2020 | [Forest Typology 2020 v1](https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616), Google DeepMind, WRI, UMD and IIASA, read from [Source Cooperative](https://source.coop/epoch/forest-typology-2020) | CC BY 4.0 |
+| Radar (optional) | [OPERA RTC-S1](https://www.earthdata.nasa.gov/data/catalog/asf-opera-l2-rtc-s1-v1-1), NASA JPL OPERA via ASF DAAC, from Copernicus Sentinel-1 | NASA open data, cite OPERA and Copernicus Sentinel-1 |
+| Surface water (optional) | [OPERA DSWx-S1](https://www.earthdata.nasa.gov/data/catalog/pocloud-opera-l3-dswx-s1-v1-1.0), NASA JPL OPERA via PO.DAAC, from Copernicus Sentinel-1 | NASA open data, cite OPERA and Copernicus Sentinel-1 |
 | Water | [ESA WorldCover 2021 v200](https://esa-worldcover.org/) | CC BY 4.0, ESA |
 | Cities | [Natural Earth](https://www.naturalearthdata.com/) populated places | Public domain |
 | Basemap | Esri World Shaded Relief | Keep the Esri attribution on the maps |
