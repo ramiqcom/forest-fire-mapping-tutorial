@@ -5,12 +5,12 @@ https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/3228861
 It gives, per 10 m pixel, the probability (0 to 250, 250 is 1) of 5 classes: primary forest,
 naturally regenerating forest, planted forest, plantation forest, and tree crops and agroforestry.
 
-The data is read from the public Space4Good copy of the figshare GeoTIFFs in Cloud Storage,
-gs://s4g-green-finance-bucket/data/cog/forest_typology/, one folder per UTM grid zone (6 x 8
-degree), e.g. 49M/raster_49M_20_14_0.tif, as in ``rs_open_source.forest_typology`` of
-remote-sensing-open-source-docker. The copy is faster and more reliable than figshare, which
-limits the requests. It is read without a login, no Google Cloud account is needed. Only the
-tiles over the AOI and the overview level closest to the resolution are read.
+The tiles are read from Source Cooperative, https://source.coop/epoch/forest-typology-2020, as in
+``rs_open_source.forest_typology`` of remote-sensing-open-source-docker: Cloud Optimised GeoTIFFs
+of about 33 x 45 km in UTM. The tiles over the AOI are found in a tile index, a FlatGeobuf with
+a spatial index made from the Source Cooperative items by Space4Good, read by bounding box in a
+few small requests. Both are public, read without a login: no AWS or Google Cloud account is
+needed. Only the tiles over the AOI and the overview level closest to the resolution are read.
 
 Writes ``output/forest_typology/<AOI_NAME>_forest_typology_<resolution>m.tif`` on this computer, a
 Cloud Optimised GeoTIFF of 7 bands: the 5 probabilities, OtherLand (250 minus the 5) and class
@@ -20,21 +20,19 @@ Skipped when the file exists, delete it to make it again.
 Run with ``docker compose run --rm forest_typology`` or ``python -m job.forest_typology``.
 """
 
-import json
 import os
-import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from logging import INFO, basicConfig, getLogger
 from math import ceil, floor
 from pathlib import Path
 from shutil import rmtree, which
-from subprocess import check_call, check_output
+from subprocess import check_call
 
+import geopandas as gpd
 import numpy as np
 import rasterio
 from rasterio.features import geometry_mask
 from rasterio.transform import from_origin
-from rasterio.warp import transform_bounds
 from shapely.geometry import box
 
 from forest_fire.aoi import read_provinces
@@ -43,14 +41,21 @@ from forest_fire.config import AOI_NAME, FOREST_TYPOLOGY_DIR, FOREST_TYPOLOGY_RE
 basicConfig(level=INFO, format="%(asctime)s - %(name)s - %(message)s", datefmt="%Y-%m-%d %H:%M:%S")
 logger = getLogger("job.forest_typology")
 
-# Public copy of the GeoTIFFs in Cloud Storage, gs://s4g-green-finance-bucket/data/cog/forest_typology/,
-# one folder per UTM grid zone, e.g. 49M/
-SOURCE_PREFIX = "/vsigs/s4g-green-finance-bucket/data/cog/forest_typology"
-# The copy is public, GDAL reads it without a Google login. Set before any GDAL call, the
-# gdal commands of the job get it from the environment
-os.environ["GS_NO_SIGN_REQUEST"] = "YES"
-# Folder name of a grid zone, e.g. 49M, the other entries of the prefix are README.txt and _mirror
-ZONE_PATTERN = re.compile(r"^[0-9]{1,2}[C-X]$")
+# Tile index of Forest Typology v1 on Source Cooperative: one feature per tile, its footprint in
+# EPSG:4326 and its link in "location". Made by scripts/forest_typology/index.py of
+# remote-sensing-open-source-docker from the GeoParquet items of Source Cooperative
+TILE_INDEX = (
+    "/vsicurl/https://storage.googleapis.com/s4g-green-finance-bucket/data/vrt/forest_typology/v1.fgb"
+)
+# The tiles are read from the S3 bucket of Source Cooperative, not from the https links of the index:
+# those go through Cloudflare, where range requests failed and were retried, 10 to 137 s per tile
+# against 2.4 s from S3 (measured in rs_open_source)
+SOURCE_COOP_HTTPS = "/vsicurl/https://data.source.coop/"
+SOURCE_COOP_S3 = "/vsis3/us-west-2.opendata.source.coop/"
+# The bucket is public, GDAL reads it without signing. Set before any GDAL call, the gdal commands
+# of the job get it from the environment
+os.environ["AWS_NO_SIGN_REQUEST"] = "YES"
+os.environ["AWS_REGION"] = "us-west-2"
 
 # Bands of the GeoTIFFs, the probability 0 to 250 (250 is 1) of each class, 255 is nodata
 BANDS = [
@@ -75,11 +80,7 @@ CRS = "EPSG:4326"
 FIRMS_CELL = 0.009
 RESOLUTION = FIRMS_CELL * FOREST_TYPOLOGY_RESOLUTION / 1000
 
-# Latitude bands of the UTM grid zones from 80 degree south, X is 12 degree high to 84 degree north
-LATITUDE_BANDS = "CDEFGHJKLMNPQRSTUVWX"
-
-# Tile headers read and tiles reprojected at the same time
-INDEX_WORKERS = 16
+# Tiles reprojected at the same time
 WARP_WORKERS = 8
 
 
@@ -89,40 +90,6 @@ def gdal(*args: str):
     if executable is None:
         raise RuntimeError("The gdal command line (GDAL 3.11 or newer) is not installed, use Docker")
     check_call([executable, *args])
-
-
-def zone_box(zone: str) -> tuple[float, float, float, float]:
-    """Longitude and latitude box of a UTM grid zone such as 49M, with the wider zones of Norway and Svalbard."""
-    number, band = int(zone[:-1]), zone[-1]
-    south = -80 + 8 * LATITUDE_BANDS.index(band)
-    north = 84 if band == "X" else south + 8
-    west, east = -180 + 6 * (number - 1), -180 + 6 * number
-    if band == "V" and number == 31:
-        east = 3
-    if band == "V" and number == 32:
-        west = 3
-    if band == "X" and number in (31, 33, 35, 37):
-        west, east = {31: (0, 9), 33: (9, 21), 35: (21, 33), 37: (33, 42)}[number]
-    return west, south, east, north
-
-
-def intersects(a: tuple[float, ...], b: tuple[float, ...]) -> bool:
-    return a[0] < b[2] and b[0] < a[2] and a[1] < b[3] and b[1] < a[3]
-
-
-def list_folder(path: str) -> list[str]:
-    """Names in a folder of the Cloud Storage copy, e.g. the zones or the tiles of a zone."""
-    return [
-        name.rstrip("/") for name in check_output([which("gdal"), "vsi", "list", path], text=True).split()
-    ]
-
-
-def list_zones() -> list[str]:
-    """The UTM grid zones of the copy, there is none over the ocean."""
-    zones = [name for name in list_folder(SOURCE_PREFIX) if ZONE_PATTERN.match(name)]
-    if not zones:
-        raise SystemExit(f"No Forest Typology zone in {SOURCE_PREFIX}")
-    return zones
 
 
 def get_extent(aoi) -> tuple[float, float, float, float]:
@@ -136,31 +103,17 @@ def get_extent(aoi) -> tuple[float, float, float, float]:
     )
 
 
-def zone_index(zone: str) -> list[dict]:
-    """Path and longitude and latitude box of every GeoTIFF of a zone.
+def list_tiles(extent) -> list[dict]:
+    """Link and longitude and latitude box of the tiles whose footprint is over ``extent``.
 
-    Read from the headers of the GeoTIFFs and kept in ``output/forest_typology/index/``, so the
-    next runs do not read them again. The tiles are on a grid of the UTM extent of the zone, so
-    their place can not be computed from their name.
+    The spatial index of the FlatGeobuf gives them in a few small requests, the whole index is
+    not downloaded.
     """
-    index_path = FOREST_TYPOLOGY_DIR / "index" / f"{zone}.json"
-    if index_path.exists():
-        return json.loads(index_path.read_text(encoding="utf-8"))
-
-    folder = f"{SOURCE_PREFIX}/{zone}"
-    paths = [f"{folder}/{name}" for name in list_folder(folder) if name.endswith(".tif")]
-    logger.info(f"Index the {len(paths)} tiles of zone {zone}")
-
-    def bounds(path: str) -> dict:
-        with rasterio.open(path) as src:
-            tile_box = transform_bounds(src.crs, CRS, *src.bounds, densify_pts=21)
-        return {"path": path, "bbox": tile_box}
-
-    with ThreadPoolExecutor(INDEX_WORKERS) as executor:
-        index = list(executor.map(bounds, paths))
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(json.dumps(index), encoding="utf-8")
-    return index
+    frame = gpd.read_file(TILE_INDEX, bbox=tuple(extent), columns=["location"])
+    return [
+        {"path": path.replace(SOURCE_COOP_HTTPS, SOURCE_COOP_S3, 1), "bbox": tuple(float(v) for v in bounds)}
+        for path, bounds in zip(frame["location"], frame.geometry.bounds.to_numpy())
+    ]
 
 
 def tile_window(bbox, extent, width: int, height: int) -> tuple[int, int, int, int] | None:
@@ -214,19 +167,13 @@ def run(output_path: Path):
     transform = from_origin(extent[0], extent[3], RESOLUTION, RESOLUTION)
     logger.info(f"Grid of {width} x {height} pixels of {FOREST_TYPOLOGY_RESOLUTION} m over {extent}")
 
-    zones = [zone for zone in list_zones() if intersects(zone_box(zone), extent)]
-    if not zones:
-        raise SystemExit(f"No Forest Typology zone over {extent}")
-    logger.info(f"Zones over the AOI: {', '.join(zones)}")
-
     # Only the tiles over the AOI provinces, not over the rest of their bounding box
     aoi_shape = provinces.union_all()
     tiles = []
-    for zone in zones:
-        for tile in zone_index(zone):
-            window = tile_window(tile["bbox"], extent, width, height)
-            if window is not None and box(*tile["bbox"]).intersects(aoi_shape):
-                tiles.append((tile["path"], window))
+    for tile in list_tiles(extent):
+        window = tile_window(tile["bbox"], extent, width, height)
+        if window is not None and box(*tile["bbox"]).intersects(aoi_shape):
+            tiles.append((tile["path"], window))
     if not tiles:
         raise SystemExit("No Forest Typology tile over the AOI")
     logger.info(f"Reproject {len(tiles)} tiles")
@@ -241,7 +188,7 @@ def run(output_path: Path):
                 data = src.read()
             tile_path.unlink()
             target = probabilities[:, row : row + h, col : col + w]
-            # The tiles overlap a little and the zones meet, the first valid value of a pixel is kept
+            # The tiles overlap a little and the UTM zones meet, the first valid value of a pixel is kept
             fill = np.all(target == NODATA, axis=0) & np.all(data != NODATA, axis=0)
             target[:, fill] = data[:, fill]
             if done % 25 == 0 or done == len(tiles):
@@ -274,7 +221,7 @@ def run(output_path: Path):
             dst.set_band_description(index, name)
         dst.update_tags(
             source="Forest Typology 2020 v1 (ForTy), Google DeepMind, WRI, UMD and IIASA, CC BY 4.0",
-            url="https://plus.figshare.com/articles/dataset/_i_Forest_Typology_2020_v1_i_/32288616",
+            url="https://source.coop/epoch/forest-typology-2020",
             probabilities="0 to 250, 250 is a probability of 1",
             classes=", ".join(f"{i} {name}" for i, name in enumerate(CLASSES, start=1)),
         )
