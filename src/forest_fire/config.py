@@ -38,9 +38,9 @@ FIRMS_SOURCES = json.loads(
     )
 )
 
-# Pixel size of the Forest Typology 2020 output in metres (the dataset is 10 m). 100 m keeps a
-# province small, 1000 m gives the cells of the FIRMS grid
-FOREST_TYPOLOGY_RESOLUTION = int(getenv("FOREST_TYPOLOGY_RESOLUTION", "100"))
+# Pixel size of the Forest Typology 2020 output in metres (the dataset is 10 m). 30 m matches the
+# Sentinel-1 composites, 100 m keeps a province small, 1000 gives the cells of the FIRMS grid
+FOREST_TYPOLOGY_RESOLUTION = int(getenv("FOREST_TYPOLOGY_RESOLUTION", "30"))
 
 
 def parse_periods(value: str) -> list[tuple[str, str]]:

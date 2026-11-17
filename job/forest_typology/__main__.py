@@ -13,8 +13,10 @@ few small requests. Both are public, read without a login: no AWS or Google Clou
 needed. Only the tiles over the AOI and the overview level closest to the resolution are read.
 
 Writes ``output/forest_typology/<AOI_NAME>_forest_typology_<resolution>m.tif`` on this computer, a
-Cloud Optimised GeoTIFF of 7 bands: the 5 probabilities, OtherLand (250 minus the 5) and class
-(1 to 6, the most probable of the 6, in that order). 255 is nodata, also outside the AOI provinces.
+Cloud Optimised GeoTIFF of 7 bands: the 5 probabilities (averaged), OtherLand (250 minus the 5) and
+class (1 to 6 in that order). The class is the most probable of the 6 per pixel of CLASS_RESOLUTION
+(10 m for an output of 30 m, 20 m for 100 m), resampled to the output with the mode, the most common class.
+255 is nodata, also outside the AOI provinces.
 Skipped when the file exists, delete it to make it again.
 
 Run with ``docker compose run --rm forest_typology`` or ``python -m job.forest_typology``.
@@ -31,6 +33,8 @@ from subprocess import check_call
 import geopandas as gpd
 import numpy as np
 import rasterio
+from affine import Affine
+from rasterio.enums import Resampling
 from rasterio.features import geometry_mask
 from rasterio.transform import from_origin
 from shapely.geometry import box
@@ -76,9 +80,15 @@ CLASSES = [
 ]
 NODATA = 255
 CRS = "EPSG:4326"
-# The FIRMS grid cell (about 1 km), the output cells nest in it: 100 m is 0.0009 degree
+# The FIRMS grid cell (about 1 km). The grid starts at a FIRMS cell corner and the pixels are a
+# 1000th of the cell per metre, 0.00027 degree for 30 m. They nest in the cells when 1000 is a
+# multiple of the resolution, e.g. 100 m (0.0009 degree)
 FIRMS_CELL = 0.009
 RESOLUTION = FIRMS_CELL * FOREST_TYPOLOGY_RESOLUTION / 1000
+# Pixel size in metres at which the class is computed before the mode resampling, a fifth of the
+# output and at least the 10 m of the dataset: 10 m for 30 m (9 pixels per output pixel), 20 m for
+# 100 m (25 pixels, from the overviews of the tiles)
+CLASS_RESOLUTION = max(10, FOREST_TYPOLOGY_RESOLUTION / 5)
 
 # Tiles reprojected at the same time
 WARP_WORKERS = 8
@@ -127,18 +137,38 @@ def tile_window(bbox, extent, width: int, height: int) -> tuple[int, int, int, i
     return col0, row0, col1 - col0, row1 - row0
 
 
-def warp_tile(path: str, window: tuple[int, int, int, int], extent, folder) -> Path:
-    """Reproject one tile onto its window of the output grid, the probabilities averaged.
+def tile_classes(path: str, output: Path) -> Path:
+    """The class of each pixel of a tile at CLASS_RESOLUTION, in the projection of the tile.
 
-    ``window`` is (column, row, width, height) in the output grid. GDAL reads the overview of the
-    tile closest to the output resolution. Tiles of the dataset can be stored bottom up, which
-    ``gdal raster reproject`` reads, unlike a virtual mosaic of gdalbuildvrt.
+    The class is the most probable of the 6 (the 5 probabilities and OtherLand, 250 minus their
+    sum), computed before any resampling, so the class band of the output is the most common
+    class of these pixels and not the class of averaged probabilities. The tile is read from its
+    overview closest to CLASS_RESOLUTION, not at 10 m.
     """
+    with rasterio.open(path) as src:
+        factor = max(1, round(CLASS_RESOLUTION / src.res[0]))
+        shape = (max(1, src.height // factor), max(1, src.width // factor))
+        data = src.read(out_shape=(src.count, *shape), resampling=Resampling.nearest)
+        transform = src.transform * Affine.scale(src.width / shape[1], src.height / shape[0])
+        crs = src.crs
+    other = np.clip(250 - data.astype(np.int16).sum(axis=0), 0, 250).astype(np.uint8)
+    classes = np.argmax(np.concatenate([data, other[None]]), axis=0).astype(np.uint8) + 1
+    classes[np.any(data == NODATA, axis=0)] = NODATA
+    profile = dict(
+        driver="GTiff", width=shape[1], height=shape[0], count=1, dtype="uint8", crs=crs,
+        transform=transform, nodata=NODATA, compress="ZSTD",
+    )  # fmt: skip
+    with rasterio.open(output, "w", **profile) as dst:
+        dst.write(classes, 1)
+    return output
+
+
+def reproject_window(source: str, output: Path, window, extent, resampling: str) -> Path:
+    """Reproject ``source`` onto its ``window`` (column, row, width, height) of the output grid."""
     col, row, width, height = window
     west = extent[0] + col * RESOLUTION
     north = extent[3] - row * RESOLUTION
     bbox = (west, north - height * RESOLUTION, west + width * RESOLUTION, north)
-    output = folder / path.rsplit("/", 1)[-1]
     gdal(
         "raster", "reproject",
         "--quiet",
@@ -147,13 +177,29 @@ def warp_tile(path: str, window: tuple[int, int, int, int], extent, folder) -> P
         f"--bbox={','.join(f'{v:.7f}' for v in bbox)}",
         f"--bbox-crs={CRS}",
         f"--size={width},{height}",
-        "--resampling=average",
+        f"--resampling={resampling}",
         f"--output-nodata={NODATA}",
         "--co=COMPRESS=ZSTD",
-        path,
+        source,
         str(output),
     )  # fmt: skip
     return output
+
+
+def warp_tile(path: str, window: tuple[int, int, int, int], extent, folder) -> tuple[Path, Path]:
+    """Reproject one tile onto its window of the output grid.
+
+    The probabilities are averaged, GDAL reads the overview of the tile closest to the output
+    resolution. The class is computed per pixel at CLASS_RESOLUTION and resampled with the mode,
+    the most common class. Tiles of the dataset can be stored bottom up, which
+    ``gdal raster reproject`` and rasterio read, unlike a virtual mosaic of gdalbuildvrt.
+    """
+    name = path.rsplit("/", 1)[-1].removesuffix(".tif")
+    probabilities = reproject_window(path, folder / f"{name}.tif", window, extent, "average")
+    classes = tile_classes(path, folder / f"{name}_class_native.tif")
+    classes_warped = reproject_window(str(classes), folder / f"{name}_class.tif", window, extent, "mode")
+    classes.unlink()
+    return probabilities, classes_warped
 
 
 def run(output_path: Path):
@@ -179,26 +225,32 @@ def run(output_path: Path):
     logger.info(f"Reproject {len(tiles)} tiles")
 
     probabilities = np.full((len(BANDS), height, width), NODATA, dtype=np.uint8)
+    classes = np.full((height, width), NODATA, dtype=np.uint8)
     with ThreadPoolExecutor(WARP_WORKERS) as executor:
         futures = {executor.submit(warp_tile, path, window, extent, folder): window for path, window in tiles}
         for done, future in enumerate(as_completed(futures), start=1):
             col, row, w, h = futures[future]
-            tile_path = future.result()
-            with rasterio.open(tile_path) as src:
+            probability_path, class_path = future.result()
+            with rasterio.open(probability_path) as src:
                 data = src.read()
-            tile_path.unlink()
+            with rasterio.open(class_path) as src:
+                tile_class = src.read(1)
+            probability_path.unlink()
+            class_path.unlink()
             target = probabilities[:, row : row + h, col : col + w]
+            target_class = classes[row : row + h, col : col + w]
             # The tiles overlap a little and the UTM zones meet, the first valid value of a pixel is kept
             fill = np.all(target == NODATA, axis=0) & np.all(data != NODATA, axis=0)
             target[:, fill] = data[:, fill]
+            fill_class = (target_class == NODATA) & (tile_class != NODATA)
+            target_class[fill_class] = tile_class[fill_class]
             if done % 25 == 0 or done == len(tiles):
                 logger.info(f"{done} of {len(tiles)} tiles")
 
-    logger.info("Add OtherLand and class")
+    logger.info("Add OtherLand")
     inside = geometry_mask(provinces.geometry, out_shape=(height, width), transform=transform, invert=True)
-    valid = np.all(probabilities != NODATA, axis=0) & inside
+    valid = np.all(probabilities != NODATA, axis=0) & (classes != NODATA) & inside
     other = np.clip(250 - probabilities.astype(np.int16).sum(axis=0), 0, 250).astype(np.uint8)
-    classes = np.argmax(np.concatenate([probabilities, other[None]]), axis=0).astype(np.uint8) + 1
     output = np.concatenate([probabilities, other[None], classes[None]])
     output[:, ~valid] = NODATA
 

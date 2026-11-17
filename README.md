@@ -44,7 +44,7 @@ The only credential you need is a free NASA FIRMS MAP_KEY. Every other dataset i
                                                                              ▲
  Forest Typology 2020 (public, Source Cooperative)                           │
         └──────────► Step 2b  job.forest_typology ──────────────────────────┘
-                     output/forest_typology/<AOI_NAME>_forest_typology_100m.tif
+                     output/forest_typology/<AOI_NAME>_forest_typology_30m.tif
 ```
 
 | Path | What it is |
@@ -242,11 +242,12 @@ The notebook draws the land cover under the fire alerts and counts the alerts pe
 [job/forest_typology](job/forest_typology/__main__.py) reads the dataset from [Source Cooperative](https://source.coop/epoch/forest-typology-2020), as in remote-sensing-open-source-docker, without a login:
 
 1. Finds the tiles over the AOI in a tile index, a FlatGeobuf with a spatial index made by Space4Good from the Source Cooperative items and read by bounding box in a few small requests. The tiles are Cloud Optimised GeoTIFFs of about 33 x 45 km, read from the public S3 bucket of Source Cooperative (its https links go through a CDN where reading parts of a file is much slower).
-2. Reprojects only the tiles over the AOI provinces onto one EPSG:4326 grid, averaging the probabilities. GDAL reads the overview of each tile closest to the resolution, not the 10 m pixels.
-3. Adds `OtherLand` (1 minus the 5 probabilities) and `class`, the most probable of the 6, and sets everything outside the AOI provinces to nodata.
-4. Writes a Cloud Optimised GeoTIFF to `output/forest_typology/<AOI_NAME>_forest_typology_<resolution>m.tif`, for example `output/forest_typology/kalimantan_tengah_forest_typology_100m.tif`.
+2. Reprojects only the tiles over the AOI provinces onto one EPSG:4326 grid, averaging the probabilities. GDAL reads the overview of each tile closest to the resolution.
+3. Computes the class of each tile pixel, the most probable of the 6 (the 5 probabilities and other land), and reprojects it onto the same grid with the mode, the most common class. The class is computed before any resampling, so it is never the class of averaged probabilities.
+4. Adds `OtherLand` (1 minus the 5 probabilities) and sets everything outside the AOI provinces to nodata.
+5. Writes a Cloud Optimised GeoTIFF to `output/forest_typology/<AOI_NAME>_forest_typology_<resolution>m.tif`, for example `output/forest_typology/kalimantan_tengah_forest_typology_30m.tif`.
 
-The resolution is `FOREST_TYPOLOGY_RESOLUTION` in `.env`, 100 m by default. The pixels nest in the 1 km cells of the FIRMS grid, and 1000 gives exactly the FIRMS grid. A finer resolution reads more data and makes a larger file: the size grows 100 times from 100 m to 10 m.
+The resolution is `FOREST_TYPOLOGY_RESOLUTION` in `.env`, 30 m by default, the pixel size of the Sentinel-1 composites. The probabilities are averaged from the 10 m pixels. The class is the most probable class of each pixel at a fifth of the resolution (at least 10 m), resampled with the mode, the most common class: at 30 m the most common of the 9 pixels of 10 m. With 100 m (or another divisor of 1000) the pixels nest in the 1 km cells of the FIRMS grid, and 1000 gives exactly the FIRMS grid. A finer resolution reads more data and makes a larger file: 30 m reads the full 10 m tiles, a few GB for a province, and needs a few GB of memory.
 
 ### Run it ###
 
@@ -459,7 +460,7 @@ Read the maps with these limits in mind:
 - **The instruments differ.** VIIRS has smaller pixels and detects smaller fires than MODIS, and the number of satellites changes over time. Compare periods with the same sources.
 - **The grid counts fewer alerts than the points.** It counts alerts within half a cell from the cell centre, which leaves out alerts in the cell corners (about a fifth in a 10 day test over Kalimantan). Use the points or the admin level 2 counts for totals.
 - **The land cover is of 2020, not of the mapped period.** A forest cleared or burned since 2020 is still forest in Forest Typology, so alerts per land cover type show where alerts fell on the 2020 map, not what burned.
-- **An alert gets the class under its point.** The point is the centre of a 375 m VIIRS or 1 km MODIS pixel, larger than the 100 m land cover pixel, so the class of the point can differ from the rest of the satellite pixel, most at forest edges. Forest Typology classes are model predictions with their own errors, the most probable class is used.
+- **An alert gets the class under its point.** The point is the centre of a 375 m VIIRS or 1 km MODIS pixel, larger than the land cover pixel, so the class of the point can differ from the rest of the satellite pixel, most at forest edges. Forest Typology classes are model predictions with their own errors, the most probable class is used.
 - **Cells near the coast and lakes** are masked with WorldCover 2021, read at about 1 km with the most common class, so small islands and narrow coasts can be left out.
 - **Cities**: Natural Earth has a few places that share a name and population with another one. The notebook leaves those out.
 
